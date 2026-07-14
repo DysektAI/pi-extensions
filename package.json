@@ -1,0 +1,24 @@
+{
+  "name": "@dysektai/pi-extensions",
+  "version": "0.1.0",
+  "description": "Public-safe Pi coding-agent extensions (tasks, search, LSP, goal loop, UX helpers, and more).",
+  "keywords": ["pi-package", "pi", "coding-agent", "extensions"],
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DysektAI/pi-extensions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DysektAI/pi-extensions/issues"
+  },
+  "homepage": "https://github.com/DysektAI/pi-extensions#readme",
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "files": [
+    "extensions/",
+    "LICENSE",
+    "README.md"
+  ]
+}
