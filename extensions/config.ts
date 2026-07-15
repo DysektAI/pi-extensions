@@ -27,6 +27,11 @@ import {
 const AUTO_LABEL = "Auto (use defaults)";
 
 export default function (pi: ExtensionAPI) {
+	// Ensure registry Map exists early so personal extensions that register during
+	// their own load (before or after this file) always share one store.
+	const g = globalThis as typeof globalThis & { __piConfigSettings?: Map<string, unknown> };
+	if (!(g.__piConfigSettings instanceof Map)) g.__piConfigSettings = new Map();
+
 	async function pickModelForRole(roleIndex: number, ctx: any): Promise<void> {
 		const spec = ROLE_SPECS[roleIndex];
 		if (!spec) return;
@@ -125,6 +130,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			// Registered setting shortcut: /config recaps [on|off]
+			// Ids may be dotted (personal extensions), e.g. /config devin.enabled on
 			const setting = getConfigSetting(key);
 			if (setting) {
 				applySetting(setting, val, ctx);
