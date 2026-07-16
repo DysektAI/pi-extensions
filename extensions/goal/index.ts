@@ -67,10 +67,6 @@ import type {
   ExtensionContext,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import {
-  AuthStorage,
-  ModelRegistry,
-} from "@earendil-works/pi-coding-agent";
 import { resolveRoleCandidates } from "../_shared/model-roles.ts";
 import {
   type GoalConfig,
@@ -130,9 +126,6 @@ function getModelFromRegistry(provider: string, modelId: string): Model<any> | n
   return getModel(provider, modelId);
 }
 
-// Lazy-initialized model infrastructure
-let authStorage: AuthStorage | null = null;
-let modelRegistry: ModelRegistry | null = null;
 // Cached config
 let loadedConfig: GoalConfig | null = null;
 
@@ -509,36 +502,10 @@ async function callJudge(
     };
   }
 
-  // Get auth
-  if (!modelRegistry) {
-    if (!authStorage) {
-      try {
-        authStorage = AuthStorage.create();
-      } catch {
-        if (config.failOpen) {
-          return {
-            done: false,
-            blocked: false,
-            reason: "Could not create auth storage - continuing",
-            confidence: 0,
-            issues: [],
-          };
-        }
-        return {
-          done: false,
-          blocked: true,
-          reason: "Could not create auth storage",
-          confidence: 0,
-          issues: [],
-        };
-      }
-    }
-    modelRegistry = ModelRegistry.create(authStorage);
-  }
-
+  // Get auth via pi's model registry (includes all configured providers)
   let auth;
   try {
-    auth = await modelRegistry.getApiKeyAndHeaders(judgeModel);
+    auth = await ctx.modelRegistry.getApiKeyAndHeaders(judgeModel);
   } catch (err: any) {
     if (config.failOpen) {
       return {
@@ -891,21 +858,10 @@ async function decomposeGoal(
     return null;
   }
 
-  // Ensure auth infrastructure is ready
-  if (!modelRegistry) {
-    if (!authStorage) {
-      try {
-        authStorage = AuthStorage.create();
-      } catch {
-        return null;
-      }
-    }
-    modelRegistry = ModelRegistry.create(authStorage);
-  }
-
+  // Get auth via pi's model registry (includes all configured providers)
   let auth;
   try {
-    auth = await modelRegistry.getApiKeyAndHeaders(decomposeModel);
+    auth = await ctx.modelRegistry.getApiKeyAndHeaders(decomposeModel);
   } catch {
     return null;
   }
