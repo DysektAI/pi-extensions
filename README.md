@@ -8,7 +8,7 @@ Install once, then enable/disable individual extensions with `pi config` or pack
 
 ```bash
 # pinned release
-pi install git:github.com/DysektAI/pi-extensions@v0.3.0
+pi install git:github.com/DysektAI/pi-extensions@v0.3.1
 
 # or latest main (less safe for production pins)
 pi install git:github.com/DysektAI/pi-extensions
@@ -17,7 +17,7 @@ pi install git:github.com/DysektAI/pi-extensions
 Private machines with SSH:
 
 ```bash
-pi install git:git@github.com:DysektAI/pi-extensions@v0.3.0
+pi install git:git@github.com:DysektAI/pi-extensions@v0.3.1
 ```
 
 Local checkout (dev — edits apply live, no copy):
@@ -36,7 +36,7 @@ pi install C:\Users\You\Documents\Github\pi-extensions
 
 ```bash
 pi list
-pi update git:github.com/DysektAI/pi-extensions@v0.3.0   # bump pin
+pi update git:github.com/DysektAI/pi-extensions@v0.3.1   # bump pin
 pi remove git:github.com/DysektAI/pi-extensions
 ```
 
@@ -48,7 +48,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `session-recap` | Post-turn recap footer; registers `recaps` with `/config` |
 | `clear-command` | `/clear` alias for `/new` with full redraw |
 | `status-tracker` | Working-status timer |
-| `read-full-header` | Always show full Read tool path header |
+| `read-full-header` | Full Read header + dependency-free `view: "outline"` source navigation |
 | `custom-footer` | Token / cost / cache footer |
 | `auto-title` | Auto session titles |
 | `auto-update` | Opt-in package updates on startup or via `/auto-update` |
@@ -101,7 +101,7 @@ not this public install unit.
 {
   "packages": [
     {
-      "source": "git:github.com/DysektAI/pi-extensions@v0.3.0",
+      "source": "git:github.com/DysektAI/pi-extensions@v0.3.1",
       "extensions": [
         "extensions/config.ts",
         "extensions/session-recap.ts",
