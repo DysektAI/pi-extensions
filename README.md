@@ -58,7 +58,6 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `discord` | Discord REST tool (`DISCORD_BOT_TOKEN`) |
 | `goal` | Persistent `/goal` loop + judge |
 | `subagent` | Subagent helpers |
-| `codex-auth-sync` | Mirror Codex CLI OAuth into Pi |
 | `credential-pool` | API-key / OAuth pool rotation (example config only) |
 | `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
 | `_shared/model-roles` | Shared role helpers (title/recap/judge/subagent) |
@@ -85,6 +84,10 @@ Brand-specific or machine-private pieces stay elsewhere:
 - DysektLB provider / startup branding
 - Orca / Herdr / local worker extensions
 - Live `credential-pool/pools.json` (local only; use `pools.example.json`)
+- `codex-auth-sync` (removed): Codex CLI OAuth mirroring into Pi. Prefer built-in
+  `openai-codex` login only if you use a ChatGPT subscription; otherwise use a
+  gateway/provider (e.g. DysektLB) and do not leave stale `openai-codex`
+  credentials in `~/.pi/agent/auth.json`.
 
 Those belong in a private package or a personal profile repo (e.g. an agent kit),
 not this public install unit.
