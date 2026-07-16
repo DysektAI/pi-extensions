@@ -1,6 +1,6 @@
 {
   "name": "@dysektai/pi-extensions",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Public-safe Pi coding-agent extensions (config menu, tasks, search, LSP, goal loop, UX helpers, and more).",
   "keywords": ["pi-package", "pi", "coding-agent", "extensions"],
   "license": "MIT",
