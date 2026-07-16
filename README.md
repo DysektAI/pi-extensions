@@ -53,6 +53,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `auto-title` | Auto session titles |
 | `auto-update` | Opt-in package updates on startup or via `/auto-update` |
 | `continue-button` | `/continue` command and Ctrl+Shift+C resume shortcut |
+| `context-management` | GPT-5.6 mid-run compaction guards + `/clear-implement` fresh-session handoff |
 | `notes-box` | Global `/note` and `/notes` inbox |
 | `task-tracker` | Plan/tasks tools + UI |
 | `web-search` | Brave / DuckDuckGo search + fetch tools |
@@ -79,6 +80,25 @@ settings with `registerConfigSetting` from `_shared/config-settings.ts`.
 ```
 
 Model roles are stored in `~/.pi/agent/model-roles.json` (not this repo).
+
+## Context management
+
+`extensions/context-management.ts` prevents long GPT-5.6 tool loops from passing
+their useful context limits before Pi's normal `agent_end` compaction check runs.
+It compacts Sol and Terra at 200K tokens and Luna at 500K, then resumes the
+interrupted run.
+
+After brainstorming reaches an agreed implementation, use:
+
+```bash
+/clear-implement
+/clear-implement optional final instruction
+```
+
+The command creates an implementation-focused summary, starts a fresh linked
+session with no raw brainstorming history, and immediately asks the new session
+to implement the handoff. The original session remains available through
+`/resume`.
 
 ## Not included (on purpose)
 
