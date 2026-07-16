@@ -1,34 +1,16 @@
 {
   "pools": {
-    "example-oauth-provider": {
-      "type": "oauth",
+    "openrouter": {
       "keys": [
-        {
-          "label": "my-account",
-          "access": "<OAUTH_ACCESS_TOKEN>",
-          "refresh": "<OAUTH_REFRESH_TOKEN>",
-          "expires": 0,
-          "accountId": "<ACCOUNT_ID>"
-        }
-      ],
-      "cooldownMs": 300000,
-      "fallbackModel": "provider/model-name"
-    },
-    "example-env-provider": {
-      "keys": [
-        { "env": "MY_API_KEY_1", "label": "primary" },
-        { "env": "MY_API_KEY_2", "label": "fallback" }
+        { "env": "OPENROUTER_KEY_1", "label": "Primary" },
+        { "env": "OPENROUTER_KEY_2", "label": "Secondary" }
       ],
       "cooldownMs": 60000,
-      "fallbackModel": "provider/model-name"
-    },
-    "example-apikey-provider": {
-      "type": "api_key",
-      "keys": [
-        { "value": "<RAW_API_KEY>", "label": "primary" }
-      ],
-      "cooldownMs": 60000,
-      "fallbackModel": "provider/model-name"
+      "fallbackModel": "anthropic/claude-sonnet-4-20250514"
     }
+  },
+  "secrets": {
+    "DISCORD_BOT_TOKEN": { "env": "DISCORD_BOT_TOKEN" },
+    "BRAVE_API_KEY": { "command": "pass show brave/api" }
   }
 }

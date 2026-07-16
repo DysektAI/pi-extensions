@@ -11,7 +11,6 @@ A Pi extension that brings Claude Code / Codex CLI-style web search capabilities
 ## Search Backends
 
 ### Brave Search API (recommended)
-
 High-quality, fast results. Same backend used by Claude Code.
 
 ```bash
@@ -22,7 +21,6 @@ export WEB_SEARCH_BACKEND=brave
 Get a free API key at [brave.com/search/api](https://brave.com/search/api/) (2000 queries/month free).
 
 ### DuckDuckGo Lite (fallback, no API key)
-
 Free web scraping fallback that works out of the box. Used automatically when Brave is unavailable.
 
 ```bash
@@ -31,7 +29,6 @@ export WEB_SEARCH_BACKEND=duckduckgo
 ```
 
 ### Auto mode (default)
-
 Automatically uses Brave if `BRAVE_API_KEY` is set, otherwise falls back to DuckDuckGo.
 
 ## Installation
@@ -51,14 +48,12 @@ Then reload Pi with `/reload` or restart.
 ## Usage
 
 The model will automatically use `web_search` when you ask about:
-
 - Recent events or current versions
 - Documentation not in its training data
 - API references or library usage
 - Anything time-sensitive
 
 Example prompts:
-
 - "What is the latest version of React?"
 - "Search for the Node.js fetch API documentation"
 - "Find the current Tailwind CSS v4 migration guide"
@@ -68,14 +63,12 @@ After searching, the model can use `web_fetch` to read full content from the mos
 ## How It Works
 
 ### Web Search
-
 1. Takes a query and result count
 2. Calls Brave Search API or scrapes DuckDuckGo Lite
 3. Returns structured results with title, URL, and snippet
 4. Custom TUI renderer shows search status and result count
 
 ### Web Fetch
-
 1. Takes a URL
 2. Fetches with appropriate headers and redirect following
 3. Extracts readable text from HTML (strips scripts, styles, nav, etc.)

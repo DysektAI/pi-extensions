@@ -51,6 +51,9 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `read-full-header` | Always show full Read tool path header |
 | `custom-footer` | Token / cost / cache footer |
 | `auto-title` | Auto session titles |
+| `auto-update` | Opt-in package updates on startup or via `/auto-update` |
+| `continue-button` | `/continue` command and Ctrl+Shift+C resume shortcut |
+| `notes-box` | Global `/note` and `/notes` inbox |
 | `task-tracker` | Plan/tasks tools + UI |
 | `web-search` | Brave / DuckDuckGo search + fetch tools |
 | `context7` | Library docs via Context7 CLI |

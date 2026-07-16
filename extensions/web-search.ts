@@ -13,7 +13,7 @@
  * Brave Search is used by Claude Code. DuckDuckGo scraping requires no API key.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -36,13 +36,39 @@ interface FetchResult {
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 const BRAVE_API_KEY = process.env.BRAVE_API_KEY;
-const BACKEND = (process.env.WEB_SEARCH_BACKEND ?? "auto") as "auto" | "brave" | "duckduckgo";
+
+// Mutable at runtime via /config web-search-backend (config-center). Seeded from
+// env so existing setups keep working; the config toggle overrides it for the session.
+type Backend = "auto" | "brave" | "duckduckgo";
+let backendPref = (process.env.WEB_SEARCH_BACKEND ?? "auto") as Backend;
 
 function effectiveBackend(): "brave" | "duckduckgo" {
-	if (BACKEND === "brave" && BRAVE_API_KEY) return "brave";
-	if (BACKEND === "duckduckgo") return "duckduckgo";
-	if (BACKEND === "auto" && BRAVE_API_KEY) return "brave";
+	if (backendPref === "brave" && BRAVE_API_KEY) return "brave";
+	if (backendPref === "duckduckgo") return "duckduckgo";
+	if (backendPref === "auto" && BRAVE_API_KEY) return "brave";
 	return "duckduckgo";
+}
+
+// Inline registry helper — see config-center.ts. globalThis so it works
+// regardless of extension load order or bundling; no shared import needed.
+function registerSetting(s: {
+	id: string;
+	label: string;
+	values: string[];
+	get: () => string;
+	set: (v: string) => void;
+}) {
+	const g = globalThis as any;
+	g.__piConfigSettings ??= new Map();
+	g.__piConfigSettings.set(s.id, s);
+}
+
+function shortDomain(url: string): string {
+	try {
+		return new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return url;
+	}
 }
 
 // ─── HTML Text Extraction ────────────────────────────────────────────────────
@@ -64,18 +90,17 @@ function extractTextFromHtml(html: string, url: string): { title: string; text: 
 		.replace(/<!--[\s\S]*?-->/g, " ");
 
 	// Extract text from main/article/content areas preferentially
-	const mainMatch = cleaned.match(/<main[\s\S]*?<\/main>/i)
-		?? cleaned.match(/<article[\s\S]*?<\/article>/i)
-		?? cleaned.match(/<div[^>]*id=["']?(?:content|main)["']?[^>]*>[\s\S]*?<\/div>/i);
+	const mainMatch =
+		cleaned.match(/<main[\s\S]*?<\/main>/i) ??
+		cleaned.match(/<article[\s\S]*?<\/article>/i) ??
+		cleaned.match(/<div[^>]*id=["']?(?:content|main)["']?[^>]*>[\s\S]*?<\/div>/i);
 
 	if (mainMatch) {
 		cleaned = mainMatch[0];
 	}
 
 	// Convert common block elements to newlines
-	cleaned = cleaned
-		.replace(/<\/(?:p|div|h[1-6]|li|tr|pre|blockquote)>/gi, "\n")
-		.replace(/<br\s*\/?>/gi, "\n");
+	cleaned = cleaned.replace(/<\/(?:p|div|h[1-6]|li|tr|pre|blockquote)>/gi, "\n").replace(/<br\s*\/?>/gi, "\n");
 
 	// Strip remaining tags
 	cleaned = cleaned.replace(/<[^>]+>/g, " ");
@@ -178,19 +203,24 @@ async function searchDuckDuckGo(query: string, count: number, signal?: AbortSign
 	const links: Array<{ url: string; title: string; index: number }> = [];
 	let match: RegExpExecArray | null;
 
-	while ((match = linkRegex.exec(html)) !== null) {
+	match = linkRegex.exec(html);
+	while (match !== null) {
 		links.push({
 			url: match[1],
-			title: match[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+			title: match[2]
+				.replace(/<[^>]+>/g, " ")
+				.replace(/\s+/g, " ")
+				.trim(),
 			index: match.index,
 		});
+		match = linkRegex.exec(html);
 	}
 
 	for (let i = 0; i < links.length && results.length < count; i++) {
 		const link = links[i];
 		let resultUrl = link.url;
-		if (resultUrl.startsWith("//")) resultUrl = "https:" + resultUrl;
-		if (resultUrl.startsWith("/")) resultUrl = "https://lite.duckduckgo.com" + resultUrl;
+		if (resultUrl.startsWith("//")) resultUrl = `https:${resultUrl}`;
+		if (resultUrl.startsWith("/")) resultUrl = `https://lite.duckduckgo.com${resultUrl}`;
 
 		// Find snippet between this link and the next link (or end)
 		const start = link.index;
@@ -200,9 +230,9 @@ async function searchDuckDuckGo(query: string, count: number, signal?: AbortSign
 		const snippetMatch = segment.match(/<td[^>]*class=['"]result-snippet['"][^>]*>([\s\S]*?)<\/td>/i);
 		const snippet = snippetMatch
 			? snippetMatch[1]
-				.replace(/<[^>]+>/g, " ")
-				.replace(/\s+/g, " ")
-				.trim()
+					.replace(/<[^>]+>/g, " ")
+					.replace(/\s+/g, " ")
+					.trim()
 			: "";
 
 		results.push({
@@ -267,7 +297,7 @@ async function fetchUrl(url: string, signal?: AbortSignal): Promise<FetchResult>
 	// Truncate to avoid overwhelming context
 	const MAX_CHARS = 48000;
 	if (text.length > MAX_CHARS) {
-		text = text.slice(0, MAX_CHARS) + "\n\n[Content truncated. Use web_fetch with a more specific URL or ask for a specific section.]";
+		text = `${text.slice(0, MAX_CHARS)}\n\n[Content truncated. Use web_fetch with a more specific URL or ask for a specific section.]`;
 	}
 
 	return { url, title, text, contentType, status };
@@ -298,17 +328,31 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 		/* cleanup if needed */
 	});
 
-	// ─── Proactive search injection ────────────────────────────────────────
-	// Append a strong reminder to the system prompt on every turn so the
-	// agent does not skip search when current info is needed.
+	// ─── One-time search directive ─────────────────────────────────────────
+	// Append the web-search reminder ONCE per session (first turn), not every
+	// turn: repeating it bloats tokens and made triggering feel inconsistent.
+	// Steady-state guidance lives in the tool's promptGuidelines.
+	let directiveSent = false;
 	pi.on("before_agent_start", async (event, _ctx) => {
+		if (directiveSent) return;
+		directiveSent = true;
 		const reminder =
-			"\n\n[Web Search Directive] You have real-time web search (web_search) and page fetching (web_fetch) available. " +
-			"For ANY user query involving current versions, recent releases, latest documentation, API changes, breaking changes, " +
-			"deprecated features, pricing, or facts that may have changed after your knowledge cutoff, you MUST call web_search " +
-			"proactively BEFORE answering. Do not guess, hallucinate, or rely on training-data memory when current information " +
-			"is likely to have changed. After searching, use web_fetch to read full content from the most relevant result(s).";
+			"\n\n[Web Search] You have real-time web_search and web_fetch tools. " +
+			"When the user asks about current versions, recent releases, latest docs, API/breaking changes, " +
+			"pricing, or anything likely changed after your training cutoff, call web_search before answering " +
+			"instead of guessing, then web_fetch the most relevant result.";
 		return { systemPrompt: event.systemPrompt + reminder };
+	});
+
+	// ─── Config-center integration ─────────────────────────────────────────
+	registerSetting({
+		id: "web-search-backend",
+		label: "Web search backend",
+		values: ["auto", "brave", "duckduckgo"],
+		get: () => backendPref,
+		set: (v) => {
+			if (v === "auto" || v === "brave" || v === "duckduckgo") backendPref = v;
+		},
 	});
 
 	// ─── Tool: web_search ──────────────────────────────────────────────────
@@ -372,8 +416,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			const query = args.query ?? "";
 			return new Text(
-				theme.fg("toolTitle", theme.bold("Web Search ")) +
-					theme.fg("muted", truncateToWidth(query, 60)),
+				theme.fg("toolTitle", theme.bold("Web Search ")) + theme.fg("muted", truncateToWidth(query, 60)),
 				0,
 				0,
 			);
@@ -381,14 +424,26 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 
 		renderResult(result, _options, theme) {
 			const details = result.details as { query?: string; backend?: string; results?: SearchResult[] } | undefined;
-			const count = details?.results?.length ?? 0;
+			const results = details?.results ?? [];
 			const backend = details?.backend ?? "unknown";
-			return new Text(
-				theme.fg("success", "✓ ") +
-					theme.fg("muted", `${count} result${count === 1 ? "" : "s"} via ${backend}`),
-				0,
-				0,
-			);
+			if (results.length === 0) {
+				return new Text(theme.fg("warning", "⚠ no results ") + theme.fg("muted", `via ${backend}`), 0, 0);
+			}
+			// Show the top hits inline (title + domain) so results are visible in the
+			// transcript, not hidden behind a count — matches Claude Code / Codex feel.
+			const lines = [
+				theme.fg("success", `✓ ${results.length} result${results.length === 1 ? "" : "s"} `) +
+					theme.fg("muted", `via ${backend}`),
+			];
+			for (const r of results.slice(0, 5)) {
+				lines.push(
+					theme.fg("muted", "  • ") +
+						theme.fg("toolTitle", truncateToWidth(r.title, 56)) +
+						theme.fg("dim", `  ${shortDomain(r.url)}`),
+				);
+			}
+			if (results.length > 5) lines.push(theme.fg("dim", `  …${results.length - 5} more`));
+			return new Text(lines.join("\n"), 0, 0);
 		},
 	});
 
@@ -423,11 +478,23 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 				const fetched = await fetchUrl(url, signal);
 				ctx.ui.setStatus("web-search", `📄 ${truncateToWidth(fetched.title, 40)}`);
 
-				const text = [`Title: ${fetched.title}`, `URL: ${fetched.url}`, `Status: ${fetched.status}`, `Content-Type: ${fetched.contentType}`, "", fetched.text];
+				const text = [
+					`Title: ${fetched.title}`,
+					`URL: ${fetched.url}`,
+					`Status: ${fetched.status}`,
+					`Content-Type: ${fetched.contentType}`,
+					"",
+					fetched.text,
+				];
 
 				return {
 					content: [{ type: "text", text: text.join("\n") }],
-					details: { url: fetched.url, title: fetched.title, status: fetched.status, contentType: fetched.contentType },
+					details: {
+						url: fetched.url,
+						title: fetched.title,
+						status: fetched.status,
+						contentType: fetched.contentType,
+					},
 				};
 			} catch (err) {
 				ctx.ui.setStatus("web-search", "📄 error");
@@ -438,8 +505,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			const url = args.url ?? "";
 			return new Text(
-				theme.fg("toolTitle", theme.bold("Web Fetch ")) +
-					theme.fg("muted", truncateToWidth(url, 60)),
+				theme.fg("toolTitle", theme.bold("Web Fetch ")) + theme.fg("muted", truncateToWidth(url, 60)),
 				0,
 				0,
 			);
@@ -470,7 +536,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 				"",
 				`Backend:     ${backend}`,
 				`BRAVE_API_KEY: ${BRAVE_API_KEY ? "✓ set" : "✗ not set"}`,
-				`WEB_SEARCH_BACKEND: ${BACKEND}`,
+				`WEB_SEARCH_BACKEND: ${backendPref} (change via /config web-search-backend)`,
 				"",
 				backend === "brave"
 					? "Using Brave Search API (high quality, fast)"

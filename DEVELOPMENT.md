@@ -13,7 +13,7 @@
 From a machine where this checkout is the intended runtime package:
 
 ```bash
-pi install C:\Users\Dysekt\Documents\Github\pi-extensions
+pi install C:\Users\You\Documents\Github\pi-extensions
 pi list
 ```
 
