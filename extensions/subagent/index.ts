@@ -342,6 +342,10 @@ async function runSingleAgent(
 		const args: string[] = ["--mode", "json", "-p", "--no-session"];
 		if (model) args.push("--model", model);
 		if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+		// Child sessions should not rediscover the full resource catalog unless the
+		// agent explicitly needs it. This keeps the default scout/review path small.
+		if (agent.inheritSkills === false) args.push("--no-skills");
+		args.push("--no-prompt-templates", "--no-themes", "--no-context-files");
 
 		let tmpPromptDir: string | null = null;
 		let tmpPromptPath: string | null = null;
@@ -373,7 +377,7 @@ async function runSingleAgent(
 				const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
 				tmpPromptDir = tmp.dir;
 				tmpPromptPath = tmp.filePath;
-				args.push("--append-system-prompt", tmpPromptPath);
+				args.push((agent.systemPromptMode ?? "append") === "replace" ? "--system-prompt" : "--append-system-prompt", tmpPromptPath);
 			}
 
 			args.push(`Task: ${task}`);

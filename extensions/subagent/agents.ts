@@ -6,18 +6,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
-export type AgentScope = "user" | "project" | "both";
+import {
+	type AgentConfig,
+	type AgentScope,
+	type AgentSystemPromptMode,
+	parseAgentFrontmatter,
+} from "./pure.ts";
 
-export interface AgentConfig {
-	name: string;
-	description: string;
-	tools?: string[];
-	model?: string;
-	fallbackModels?: string[];
-	systemPrompt: string;
-	source: "user" | "project";
-	filePath: string;
-}
+export type { AgentConfig, AgentScope, AgentSystemPromptMode };
 
 export interface AgentDiscoveryResult {
 	agents: AgentConfig[];
@@ -50,32 +46,11 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			continue;
 		}
 
-		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
-
-		if (!frontmatter.name || !frontmatter.description) {
-			continue;
+		const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
+		const agent = parseAgentFrontmatter(frontmatter, body, source, filePath);
+		if (agent) {
+			agents.push(agent);
 		}
-
-		const tools = frontmatter.tools
-			?.split(",")
-			.map((t: string) => t.trim())
-			.filter(Boolean);
-
-		const fallbackModels = frontmatter.fallbackModels
-			?.split(",")
-			.map((m: string) => m.trim())
-			.filter(Boolean);
-
-		agents.push({
-			name: frontmatter.name,
-			description: frontmatter.description,
-			tools: tools && tools.length > 0 ? tools : undefined,
-			model: frontmatter.model,
-			fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
-			systemPrompt: body,
-			source,
-			filePath,
-		});
 	}
 
 	return agents;

@@ -61,7 +61,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `lsp` | Warm multi-language LSP tools |
 | `discord` | Discord REST tool (`DISCORD_BOT_TOKEN`) |
 | `goal` | Persistent `/goal` loop + judge |
-| `subagent` | Subagent helpers |
+| `subagent` | Subagent helpers ([docs](extensions/subagent/README.md)) |
 | `credential-pool` | API-key / OAuth pool rotation (example config only) |
 | `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
 | `_shared/model-roles` | Shared role helpers (title/recap/judge/subagent) |
