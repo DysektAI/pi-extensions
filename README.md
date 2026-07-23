@@ -4,6 +4,11 @@ Public-safe [Pi](https://github.com/earendil-works/pi) coding-agent extensions f
 
 Install once, then enable/disable individual extensions with `pi config` or package filters.
 
+> **LSP moved:** The LSP extension is now a dedicated package at
+> [DysektAI/pi-lsp](https://github.com/DysektAI/pi-lsp) with managed isolated installs,
+> an interactive `/lsp` manager, and 9 tools. The lightweight `lsp.ts` that was
+> previously bundled here has been removed to prevent duplicate tool registration.
+
 ## Install
 
 ```bash
