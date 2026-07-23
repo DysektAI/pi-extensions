@@ -58,7 +58,6 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `task-tracker` | Plan/tasks tools + UI |
 | `web-search` | Brave / DuckDuckGo search + fetch tools |
 | `context7` | Library docs via Context7 CLI |
-| `lsp` | Warm multi-language LSP tools |
 | `discord` | Discord REST tool (`DISCORD_BOT_TOKEN`) |
 | `goal` | Persistent `/goal` loop + judge |
 | `subagent` | Subagent helpers ([docs](extensions/subagent/README.md)) |
