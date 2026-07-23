@@ -11,7 +11,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
@@ -20,24 +20,42 @@ import { performance } from "node:perf_hooks";
 // Language registry: extension -> server. command must be on PATH.
 // markers are walked up from the file to find the project root.
 // ---------------------------------------------------------------------------
-type Lang = { key: string; cmd: string; args: string[]; languageId: string; markers: string[]; install: string };
-const LANGS: Lang[] = [
+export type Lang = {
+  key: string;
+  cmd: string;
+  args: string[];
+  languageId: string;
+  markers: string[];
+  extensions: string[];
+  install: string;
+};
+export const LANGS: Lang[] = [
   { key: "typescript", cmd: "typescript-language-server", args: ["--stdio"], languageId: "typescript",
-    markers: ["tsconfig.json", "package.json", "jsconfig.json"], install: "npm i -g typescript-language-server typescript" },
+    markers: ["tsconfig.json", "package.json", "jsconfig.json"], extensions: ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"],
+    install: "npm i -g typescript-language-server typescript" },
   { key: "python", cmd: "pyright-langserver", args: ["--stdio"], languageId: "python",
-    markers: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"], install: "npm i -g pyright  (or pipx install pyright)" },
+    markers: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"], extensions: ["py", "pyi"],
+    install: "npm i -g pyright  (or pipx install pyright)" },
   { key: "rust", cmd: "rust-analyzer", args: [], languageId: "rust",
-    markers: ["Cargo.toml"], install: "rustup component add rust-analyzer" },
+    markers: ["Cargo.toml"], extensions: ["rs"], install: "rustup component add rust-analyzer" },
   { key: "go", cmd: "gopls", args: [], languageId: "go",
-    markers: ["go.mod", "go.work"], install: "go install golang.org/x/tools/gopls@latest" },
+    markers: ["go.mod", "go.work"], extensions: ["go"], install: "go install golang.org/x/tools/gopls@latest" },
+  { key: "csharp", cmd: "csharp-ls", args: [], languageId: "csharp",
+    markers: ["*.sln", "*.slnx", "global.json", "Directory.Build.props", "*.csproj"], extensions: ["cs"],
+    install: "dotnet tool install --global csharp-ls" },
 ];
 const EXT_TO_LANG: Record<string, Lang> = {};
-for (const l of LANGS) {
-  const exts = l.key === "typescript" ? ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"]
-    : l.key === "python" ? ["py", "pyi"]
-    : l.key === "rust" ? ["rs"]
-    : ["go"];
-  for (const e of exts) EXT_TO_LANG[e] = l;
+for (const lang of LANGS) {
+  for (const ext of lang.extensions) EXT_TO_LANG[ext] = lang;
+}
+
+export function langFor(file: string): Lang | null {
+  const ext = file.split(".").pop()?.toLowerCase() ?? "";
+  return EXT_TO_LANG[ext] ?? null;
+}
+
+export function supportedLanguages(): string {
+  return "TS/JS, Python, Rust, Go, C#";
 }
 
 const isInstalled = (() => {
@@ -52,15 +70,46 @@ const isInstalled = (() => {
   };
 })();
 
-function findRoot(file: string, markers: string[]): string {
-  let dir = dirname(resolve(file));
-  // walk up until a marker is found; stop at filesystem root
+function hasMarker(dir: string, marker: string): boolean {
+  if (!marker.startsWith("*.")) return existsSync(join(dir, marker));
+  try {
+    const suffix = marker.slice(1).toLowerCase();
+    return readdirSync(dir).some((entry) => entry.toLowerCase().endsWith(suffix));
+  } catch {
+    return false;
+  }
+}
+
+export function findRoot(file: string, markers: string[], preferSolution = false): string {
+  const fallback = dirname(resolve(file));
+  const dirs: string[] = [];
+  let dir = fallback;
   for (;;) {
-    if (markers.some((m) => existsSync(join(dir, m)))) return dir;
+    dirs.push(dir);
     const parent = dirname(dir);
-    if (parent === dir) return dirname(resolve(file)); // fallback: file's dir
+    if (parent === dir) break;
     dir = parent;
   }
+
+  if (preferSolution) {
+    // C# should load a solution containing the file's nearest project. Ignore
+    // unrelated solution files above the first project/config boundary.
+    const boundaryIndex = dirs.findIndex((candidate) =>
+      markers.slice(2).some((marker) => hasMarker(candidate, marker))
+    );
+    const solutionSearchDirs = boundaryIndex >= 0 ? dirs.slice(0, boundaryIndex + 3) : dirs;
+    for (const marker of markers.slice(0, 2)) {
+      const match = solutionSearchDirs.find((candidate) => hasMarker(candidate, marker));
+      if (match) return match;
+    }
+    if (boundaryIndex >= 0) return dirs[boundaryIndex];
+    return fallback;
+  }
+
+  for (const candidate of dirs) {
+    if (markers.some((marker) => hasMarker(candidate, marker))) return candidate;
+  }
+  return fallback;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -72,6 +121,10 @@ function withTimeout<T, S>(p: Promise<T>, ms: number, sentinel: S): Promise<T | 
 
 const SEV = ["", "error", "warning", "info", "hint"];
 
+export function isServerRequest(msg: any): boolean {
+  return msg.id !== undefined && typeof msg.method === "string";
+}
+
 // ---------------------------------------------------------------------------
 // Minimal LSP client over stdio.
 // ---------------------------------------------------------------------------
@@ -81,11 +134,13 @@ class LspClient {
   private proc: ChildProcess;
   private buf = Buffer.alloc(0);
   private id = 0;
-  private pending = new Map<number, (r: any) => void>();
+  private pending = new Map<number, { resolve: (r: any) => void; timer: NodeJS.Timeout }>();
   private diagWaiters: Array<{ uri: string; resolve: (d: Diagnostic[]) => void }> = [];
   private latestDiags = new Map<string, Diagnostic[]>();
   private versions = new Map<string, number>();
   private opened = new Set<string>();
+  private workspaceReady = Promise.resolve();
+  private finishWorkspaceLoad: (() => void) | null = null;
   lastDiagAt = 0;
   ready: Promise<boolean>;
   readonly lang: Lang;
@@ -119,14 +174,9 @@ class LspClient {
   }
 
   private dispatch(msg: any) {
-    // response to our request
-    if (msg.id !== undefined && this.pending.has(msg.id)) {
-      this.pending.get(msg.id)!(msg.result);
-      this.pending.delete(msg.id);
-      return;
-    }
-    // server -> client request: must answer or the server may block
-    if (msg.id !== undefined && msg.method) {
+    // Server requests have their own id namespace. Check method first so a
+    // server request whose id matches one of ours is not mistaken for a reply.
+    if (isServerRequest(msg)) {
       let result: any = null;
       if (msg.method === "workspace/configuration") {
         result = (msg.params?.items ?? []).map(() => ({}));
@@ -134,7 +184,25 @@ class LspClient {
       this.send({ jsonrpc: "2.0", id: msg.id, result });
       return;
     }
+    // response to our request
+    if (msg.id !== undefined && this.pending.has(msg.id)) {
+      const pending = this.pending.get(msg.id)!;
+      clearTimeout(pending.timer);
+      pending.resolve(msg.result);
+      this.pending.delete(msg.id);
+      return;
+    }
     // notifications
+    if (msg.method === "$/progress" && msg.params?.value?.kind === "end") {
+      this.finishWorkspaceLoad?.();
+      this.finishWorkspaceLoad = null;
+      return;
+    }
+    if (msg.method === "window/logMessage" && msg.params?.type === 1) {
+      this.finishWorkspaceLoad?.();
+      this.finishWorkspaceLoad = null;
+      return;
+    }
     if (msg.method === "textDocument/publishDiagnostics") {
       const uri: string = msg.params.uri;
       const diags: Diagnostic[] = msg.params.diagnostics ?? [];
@@ -155,7 +223,14 @@ class LspClient {
   }
   private request<T = any>(method: string, params: any): Promise<T> {
     const id = ++this.id;
-    return new Promise<T>((res) => { this.pending.set(id, res); this.send({ jsonrpc: "2.0", id, method, params }); });
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} request timed out`));
+      }, method === "initialize" ? 25000 : 30000);
+      this.pending.set(id, { resolve, timer });
+      this.send({ jsonrpc: "2.0", id, method, params });
+    });
   }
   private notify(method: string, params: any) { this.send({ jsonrpc: "2.0", method, params }); }
   private nextDiag(uri: string) { return new Promise<Diagnostic[]>((res) => this.diagWaiters.push({ uri, resolve: res })); }
@@ -163,7 +238,7 @@ class LspClient {
 
   private async initialize(): Promise<boolean> {
     const rootUri = pathToFileURL(this.root).href;
-    const init = await withTimeout(this.request("initialize", {
+    const init = await this.request("initialize", {
       processId: process.pid,
       rootPath: this.root,
       rootUri,
@@ -177,12 +252,24 @@ class LspClient {
           references: { dynamicRegistration: false },
         },
         workspace: { configuration: true, workspaceFolders: true },
+        window: { workDoneProgress: true },
       },
       initializationOptions: {},
-    }), 25000, null);
+    }).catch(() => null);
     if (init === null) return false;
+    if (this.lang.key === "csharp") {
+      this.workspaceReady = new Promise<void>((resolve) => { this.finishWorkspaceLoad = resolve; });
+      setTimeout(() => {
+        this.finishWorkspaceLoad?.();
+        this.finishWorkspaceLoad = null;
+      }, 60000).unref();
+    }
     this.notify("initialized", {});
     return true;
+  }
+
+  private async waitUntilWorkspaceReady(): Promise<void> {
+    if (this.lang.key === "csharp") await this.workspaceReady;
   }
 
   /** Open (or re-open) a file with current disk content; returns the text. */
@@ -201,6 +288,16 @@ class LspClient {
   /** Re-open and wait for the server to publish diagnostics; settle on the final report. */
   async diagnostics(file: string): Promise<{ diags: Diagnostic[]; timedOut: boolean }> {
     const uri = pathToFileURL(resolve(file)).href;
+    if (this.lang.key === "csharp") {
+      this.openFresh(file);
+      await this.waitUntilWorkspaceReady();
+      const report = await this.request<any>("textDocument/diagnostic", {
+        textDocument: { uri },
+      }).catch(() => null);
+      if (report === null) return { diags: [], timedOut: true };
+      return { diags: report.items ?? [], timedOut: false };
+    }
+
     this.drainDiag(uri); // clear any leftover waiter from a prior timed-out call
     const waiter = this.nextDiag(uri);
     this.openFresh(file);
@@ -218,27 +315,34 @@ class LspClient {
 
   async hover(file: string, pos: { line: number; character: number }) {
     this.openFresh(file);
+    await this.waitUntilWorkspaceReady();
     await sleep(150); // let the server index the freshly-opened doc
-    return withTimeout(this.request("textDocument/hover", {
+    return this.request("textDocument/hover", {
       textDocument: { uri: pathToFileURL(resolve(file)).href }, position: pos,
-    }), 15000, null);
+    }).catch(() => null);
   }
   async definition(file: string, pos: { line: number; character: number }) {
     this.openFresh(file);
+    await this.waitUntilWorkspaceReady();
     await sleep(150);
-    return withTimeout(this.request("textDocument/definition", {
+    return this.request("textDocument/definition", {
       textDocument: { uri: pathToFileURL(resolve(file)).href }, position: pos,
-    }), 15000, null);
+    }).catch(() => null);
   }
   async references(file: string, pos: { line: number; character: number }) {
     this.openFresh(file);
+    await this.waitUntilWorkspaceReady();
     await sleep(150);
-    return withTimeout(this.request("textDocument/references", {
+    return this.request("textDocument/references", {
       textDocument: { uri: pathToFileURL(resolve(file)).href }, position: pos, context: { includeDeclaration: false },
-    }), 20000, null);
+    }).catch(() => null);
   }
 
-  kill() { try { this.proc.kill(); } catch {} }
+  kill() {
+    for (const pending of this.pending.values()) clearTimeout(pending.timer);
+    this.pending.clear();
+    try { this.proc.kill(); } catch {}
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -284,19 +388,14 @@ const textResult = (text: string, details: Record<string, unknown> = {}, isError
 export default function (pi: ExtensionAPI) {
   const pool = new Map<string, LspClient>(); // key: `${lang.key}::${root}`
 
-  function langFor(file: string): Lang | null {
-    const ext = file.split(".").pop()?.toLowerCase() ?? "";
-    return EXT_TO_LANG[ext] ?? null;
-  }
-
   /** Get-or-spawn a warm server for this file. Returns client or an error string. */
   async function serverFor(file: string, ctx: ExtensionContext): Promise<LspClient | string> {
     const abs = resolve(file);
     if (!existsSync(abs)) return `file not found: ${file}`;
     const lang = langFor(abs);
-    if (!lang) return `no language server configured for ${file} (supported: ts/js, py, rs, go)`;
+    if (!lang) return `no language server configured for ${file} (supported: ${supportedLanguages()})`;
     if (!isInstalled(lang.cmd)) return `${lang.cmd} is not installed. Install with: ${lang.install}`;
-    const root = findRoot(abs, lang.markers);
+    const root = findRoot(abs, lang.markers, lang.key === "csharp");
     const key = `${lang.key}::${root}`;
     let client = pool.get(key);
     if (!client) {
@@ -326,9 +425,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "lsp_diagnostics",
     label: "LSP Diagnostics",
-    description: "Get type/compiler errors and warnings for a file from a warm language server (TS/JS, Python, Rust, Go). Faster and more accurate than running a full build; use after editing a file to check it still type-checks.",
+    description: "Get type/compiler errors and warnings for a file from a warm language server (TS/JS, Python, Rust, Go, C#). Faster and more accurate than running a full build; use after editing a file to check it still type-checks.",
     promptSnippet: "Get type errors/warnings for a file via a warm language server",
-    promptGuidelines: ["Use lsp_diagnostics after editing a TS/JS/Python/Rust/Go file to verify it type-checks, instead of running a full build for a quick check."],
+    promptGuidelines: ["Use lsp_diagnostics after editing a TS/JS/Python/Rust/Go/C# file to verify it type-checks, instead of running a full build for a quick check."],
     parameters: Type.Object({ file: Type.String({ description: "Path to the source file to check." }) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const c = await serverFor(params.file, ctx);
@@ -353,7 +452,7 @@ export default function (pi: ExtensionAPI) {
     label: "LSP Find References",
     description: "Find all references to a symbol using semantic analysis (real call sites, not text matches). More precise than grep for renaming or impact analysis. Give a symbol name or an exact line/column.",
     promptSnippet: "Find semantic references to a symbol (more precise than grep)",
-    promptGuidelines: ["Prefer lsp_references over grep when you need exact call sites of a symbol in TS/JS/Python/Rust/Go code (e.g. before renaming or assessing impact)."],
+    promptGuidelines: ["Prefer lsp_references over grep when you need exact call sites of a symbol in TS/JS/Python/Rust/Go/C# code (e.g. before renaming or assessing impact)."],
     parameters: Type.Object(posParams),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const c = await serverFor(params.file, ctx);
