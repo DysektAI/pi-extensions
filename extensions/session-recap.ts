@@ -1,11 +1,14 @@
 /**
  * Session Recap Extension
  *
- * After each agent response, injects a subtle footer showing:
- *   ✻ Done in 55s  ※ recap: what was done + what's next  (disable: /config recaps off)
+ * After each agent response, injects a clean recap entry showing:
+ *   ✻ Done in 55s  ※ recap: what was done + what's next
+ *
+ * Uses appendEntry + registerEntryRenderer instead of sendMessage to avoid
+ * polluting LLM context or triggering message events that interfere with typing.
  *
  * Recap text uses the "recap" model role (see _shared/model-roles.ts), then falls
- * back to the active chat model. Timing-only footer if generation fails.
+ * back to the active chat model. Timing-only recap if generation fails.
  *
  * Toggle via /config (owned by config.ts) or:
  *   /config recaps on|off
@@ -14,6 +17,7 @@
 import { complete } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Box } from "@earendil-works/pi-tui";
 import { registerConfigSetting } from "./_shared/config-settings.ts";
 import { resolveRoleCandidates } from "./_shared/model-roles.ts";
 
@@ -66,7 +70,6 @@ function buildSnippet(messages: any[]): string {
 
 export default function (pi: ExtensionAPI) {
 	let enabled = true;
-	let hintShown = false;
 	let requestStart = 0;
 	let pendingTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingMessages: any[] | null = null;
@@ -186,10 +189,8 @@ export default function (pi: ExtensionAPI) {
 						// Timing-only fallback
 					}
 
-					const hint = hintShown ? "" : " (disable: /config recaps off)";
-					if (recap) hintShown = true;
-					const content = recap ? `${doneStr}  ※ recap: ${recap}${hint}` : doneStr;
-					pi.sendMessage({ customType: "session-recap", content, display: true });
+					const content = recap ? `${doneStr}  ※ recap: ${recap}` : doneStr;
+					pi.appendEntry("session-recap", { content });
 				} catch {
 					// Context went stale (session switch/reload/fork) — discard
 				}
@@ -197,7 +198,11 @@ export default function (pi: ExtensionAPI) {
 		}, RECAP_DELAY_MS);
 	});
 
-	pi.registerMessageRenderer("session-recap", (message, _options, theme) => {
-		return new Text(theme.fg("dim", String(message.content ?? "")), 0, 0);
+	pi.registerEntryRenderer("session-recap", (entry, _options, theme) => {
+		const data = entry.data as { content?: string } | undefined;
+		if (!data?.content) return undefined;
+		const box = new Box(1, 1, (t) => t);
+		box.addChild(new Text(theme.fg("dim", data.content), 0, 0));
+		return box;
 	});
 }
