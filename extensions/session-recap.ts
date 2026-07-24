@@ -201,7 +201,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerEntryRenderer("session-recap", (entry, _options, theme) => {
 		const data = entry.data as { content?: string } | undefined;
 		if (!data?.content) return undefined;
-		const box = new Box(1, 1, (t) => t);
+		const box = new Box(1, 0, (t) => t);
 		box.addChild(new Text(theme.fg("dim", data.content), 0, 0));
 		return box;
 	});
