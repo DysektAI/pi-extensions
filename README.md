@@ -1,5 +1,7 @@
 # pi-extensions
 
+[![CI](https://github.com/DysektAI/pi-extensions/actions/workflows/ci.yml/badge.svg)](https://github.com/DysektAI/pi-extensions/actions/workflows/ci.yml)
+
 Public-safe [Pi](https://github.com/earendil-works/pi) coding-agent extensions from DysektAI.
 
 Install once, then enable/disable individual extensions with `pi config` or package filters.

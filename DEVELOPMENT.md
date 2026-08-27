@@ -40,6 +40,22 @@ directories (`devin-worker`, `orca-*`, etc.).
 
 Other extensions should register settings rather than re-registering `/config`.
 
+## Tests
+
+Pure-helper unit tests run with the Node test runner via `tsx` — no live Pi
+runtime or API keys needed:
+
+```bash
+npm test
+```
+
+Test files live next to the code they cover as `extensions/<name>/tests.ts` and
+must only import from dependency-free modules (e.g. `pure.ts`), never from
+`@earendil-works/*`. When you add a new test file, append it to the `test`
+script in `package.json` — CI (`.github/workflows/ci.yml`) runs
+`npm run verify` on every push to `main` and every PR, on Ubuntu, Windows, and
+macOS across Node 20 and 22.
+
 ## Releases
 
 Bump `package.json` version, tag `vX.Y.Z`, and pin installs with `@vX.Y.Z`.

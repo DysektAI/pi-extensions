@@ -13,6 +13,16 @@
     "url": "https://github.com/DysektAI/pi-extensions/issues"
   },
   "homepage": "https://github.com/DysektAI/pi-extensions#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts",
+    "verify": "npm test"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.12"
+  },
   "pi": {
     "extensions": ["./extensions"]
   },
