@@ -80,8 +80,8 @@ function extractTextFromHtml(html: string, url: string): { title: string; text: 
 
 	// Remove scripts, styles, nav, footer, aside, header
 	let cleaned = html
-		.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
-		.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+		.replace(/<script[^>]*>[\s\S]*?<\/script[^>]*>/gi, " ")
+		.replace(/<style[^>]*>[\s\S]*?<\/style[^>]*>/gi, " ")
 		.replace(/<nav[\s\S]*?<\/nav>/gi, " ")
 		.replace(/<footer[\s\S]*?<\/footer>/gi, " ")
 		.replace(/<aside[\s\S]*?<\/aside>/gi, " ")
@@ -105,14 +105,26 @@ function extractTextFromHtml(html: string, url: string): { title: string; text: 
 	// Strip remaining tags
 	cleaned = cleaned.replace(/<[^>]+>/g, " ");
 
-	// Decode common entities
-	cleaned = cleaned
-		.replace(/&nbsp;/g, " ")
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&quot;/g, '"')
-		.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+	// Decode common entities in a single pass so each entity is decoded exactly
+	// once (chained replaces double-unescape inputs like "&amp;lt;").
+	cleaned = cleaned.replace(
+		/&nbsp;|&lt;|&gt;|&quot;|&amp;|&#(\d+);/g,
+		(match: string, code?: string) => {
+			if (code !== undefined) return String.fromCharCode(Number(code));
+			switch (match) {
+				case "&nbsp;":
+					return " ";
+				case "&lt;":
+					return "<";
+				case "&gt;":
+					return ">";
+				case "&quot;":
+					return '"';
+				default:
+					return "&";
+			}
+		},
+	);
 
 	// Normalize whitespace
 	cleaned = cleaned
