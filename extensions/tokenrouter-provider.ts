@@ -6,18 +6,39 @@
  * platform that automatically selects the best AI provider and model for your
  * requests, supporting OpenAI, Anthropic, Google, Mistral, DeepSeek, and Meta.
  *
- * Set TOKENROUTER_API_KEY in your environment (e.g. in ~/.secrets/api-keys.env).
- * When unset, the provider is skipped entirely.
+ * Auth resolution order:
+ * 1. `tokenrouter` entry in ~/.pi/agent/auth.json (persistent, no env var needed)
+ * 2. TOKENROUTER_API_KEY environment variable
+ *
+ * When neither is set, the provider is skipped entirely.
  *
  * @see https://docs.tokenrouter.io
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readFile } from "fs/promises";
+import { homedir } from "os";
+import { join } from "path";
 
 const BASE_URL = "https://api.tokenrouter.io/v1";
-// Key comes from the environment, never hardcoded. Set TOKENROUTER_API_KEY
-// (e.g. in ~/.secrets/api-keys.env). When unset, the provider is skipped.
-const API_KEY = process.env.TOKENROUTER_API_KEY ?? "";
+
+/** Resolve the TokenRouter API key: auth.json first (persistent), then env. */
+async function readApiKey(): Promise<string | undefined> {
+	try {
+		const auth = JSON.parse(await readFile(join(homedir(), ".pi", "agent", "auth.json"), "utf8")) as Record<
+			string,
+			unknown
+		>;
+		const entry = auth.tokenrouter;
+		if (typeof entry === "string") return entry;
+		if (entry && typeof entry === "object" && typeof (entry as { key?: unknown }).key === "string") {
+			return (entry as { key: string }).key;
+		}
+	} catch {
+		// No auth.json entry; fall back to the environment.
+	}
+	return process.env.TOKENROUTER_API_KEY;
+}
 
 interface TokenRouterModel {
 	id: string;
@@ -92,17 +113,23 @@ function getMaxTokens(id: string): number {
 }
 
 export default async function tokenrouterProvider(pi: ExtensionAPI) {
+	const apiKey = await readApiKey();
 	// No key configured -> don't register the provider (avoids unauthenticated calls).
-	if (!API_KEY) return;
+	if (!apiKey) return;
 
 	let models: TokenRouterModel[] = [];
 
 	try {
 		const response = await fetch(`${BASE_URL}/models`, {
-			headers: { Authorization: `Bearer ${API_KEY}` },
+			headers: { Authorization: `Bearer ${apiKey}` },
 			signal: AbortSignal.timeout(10000),
 		});
-		const payload = (await response.json()) as { data: TokenRouterModel[] };
+		const payload = (await response.json()) as { data?: TokenRouterModel[] };
+		// Throw on non-OK or malformed payloads so the fallback catalog below kicks in
+		// instead of crashing the extension (payload.data is undefined on e.g. 401).
+		if (!response.ok || !Array.isArray(payload.data)) {
+			throw new Error(`models fetch failed (HTTP ${response.status})`);
+		}
 		models = payload.data;
 	} catch {
 		// Fallback: register with a known subset so the provider is still usable
@@ -122,7 +149,9 @@ export default async function tokenrouterProvider(pi: ExtensionAPI) {
 	pi.registerProvider("tokenrouter", {
 		name: "TokenRouter",
 		baseUrl: BASE_URL,
-		apiKey: "$TOKENROUTER_API_KEY",
+		// Use the same credential that successfully fetched this catalog so
+		// discovery and chat stay consistent; auth.json works without an env var.
+		apiKey,
 		api: "openai-completions",
 		authHeader: true,
 		models: models.map((m) => ({
