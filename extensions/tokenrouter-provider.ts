@@ -1,10 +1,10 @@
 /**
  * TokenRouter Provider Extension for Pi
  *
- * Registers https://api.tokenrouter.io/v1 as an OpenAI-compatible provider
+ * Registers https://api.tokenrouter.com/v1 as an OpenAI-compatible provider
  * with dynamically fetched models. TokenRouter is an intelligent LLM routing
- * platform that automatically selects the best AI provider and model for your
- * requests, supporting OpenAI, Anthropic, Google, Mistral, DeepSeek, and Meta.
+ * platform that routes requests across OpenAI, Anthropic, Google, DeepSeek,
+ * Qwen, Moonshot, Z-AI, MiniMax, xAI, and more.
  *
  * Auth resolution order:
  * 1. `tokenrouter` entry in ~/.pi/agent/auth.json (persistent, no env var needed)
@@ -12,15 +12,21 @@
  *
  * When neither is set, the provider is skipped entirely.
  *
+ * Resilience: never throws. A failed fetch falls back to the last-known model
+ * list cached on disk, so models still appear when TokenRouter is briefly
+ * unreachable. The cache is written with 0600 because a catalog fetch requires
+ * sending the API key and catalog contents can be sensitive.
+ *
  * @see https://docs.tokenrouter.io
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 
-const BASE_URL = "https://api.tokenrouter.io/v1";
+const BASE_URL = "https://api.tokenrouter.com/v1";
+const FETCH_TIMEOUT_MS = 10000;
 
 /** Resolve the TokenRouter API key: auth.json first (persistent), then env. */
 async function readApiKey(): Promise<string | undefined> {
@@ -42,110 +48,159 @@ async function readApiKey(): Promise<string | undefined> {
 
 interface TokenRouterModel {
 	id: string;
-	owned_by: string;
-	pricing?: {
-		inputCostPerToken: number;
-		outputCostPerToken: number;
-	};
+	owned_by?: string;
+	supported_endpoint_types?: string[];
+	tags?: string;
 }
 
-// Models known to support extended reasoning / chain-of-thought.
-const REASONING_MODELS = new Set([
-	"gemini-2.5-pro",
-	"gemini-2.5-flash",
-	"gemini-3-pro-preview",
-	"gemini-3.1-pro-preview",
-	"gemini-3.5-flash",
-	"gemini-3-flash-preview",
-	"deepseek-v3.2",
-	"deepseek-ai/deepseek-v3.1",
-	"deepseek-ai/deepseek-v4-pro",
-	"deepseek-ai/deepseek-v4-flash",
-	"claude-opus-4-6",
-	"claude-opus-4-7",
-	"claude-sonnet-4-6",
-	"gpt-5.3-codex",
-	"gpt-5.4",
-	"gpt-5.4-mini",
-	"gpt-5.5",
-	"o1-preview",
-	"o1-mini",
-	"o3-mini",
-]);
+function cachePath(): string {
+	return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), ".cache", "tokenrouter-models.json");
+}
 
-// Vision-capable families. Substring match so new releases keep image support
-// instead of silently regressing to text-only.
-const IMAGE_FAMILIES = [
+/** Models that speak the OpenAI chat-completions wire API. Everything else
+ * (gemini-native, anthropic-native, image/video/embeddings/audio endpoints)
+ * is not usable through pi's openai-completions driver and is skipped. */
+function isChatModel(model: TokenRouterModel): boolean {
+	const endpoints = model.supported_endpoint_types ?? [];
+	return endpoints.includes("openai");
+}
+
+function extractModels(payload: unknown): TokenRouterModel[] {
+	if (payload && typeof payload === "object" && Array.isArray((payload as { data?: TokenRouterModel[] }).data)) {
+		return (payload as { data: TokenRouterModel[] }).data;
+	}
+	if (Array.isArray(payload)) return payload as TokenRouterModel[];
+	return [];
+}
+
+async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {
+	const response = await fetch(`${BASE_URL}/models`, {
+		headers: { Authorization: `Bearer ${apiKey}` },
+		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+	});
+	if (!response.ok) {
+		const hint = response.status === 401 ? "; update the tokenrouter entry in ~/.pi/agent/auth.json" : "";
+		throw new Error(`HTTP ${response.status}${hint}`);
+	}
+	const models = extractModels(await response.json()).filter(isChatModel);
+	if (models.length === 0) throw new Error("no chat models returned for this key");
+	return models;
+}
+
+/** Best-effort cache write; never throws (a cache failure must not break pi). */
+async function writeCache(models: TokenRouterModel[]): Promise<void> {
+	try {
+		const path = cachePath();
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(path, JSON.stringify(models), { encoding: "utf8", mode: 0o600 });
+	} catch {
+		/* cache is best-effort */
+	}
+}
+
+async function loadCache(): Promise<TokenRouterModel[]> {
+	try {
+		const content = await readFile(cachePath(), "utf8");
+		return extractModels(JSON.parse(content)).filter(isChatModel);
+	} catch {
+		return [];
+	}
+}
+
+function titleize(id: string): string {
+	return id
+		.split(/[\s/_-]+/)
+		.filter(Boolean)
+		.map((part) => (part.toUpperCase() === part ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+		.join(" ");
+}
+
+// Substring matches over vendor/model IDs. Ordered most-specific first.
+const REASONING_PATTERNS = [
+	"deepseek-v4-pro",
+	"deepseek-v3.2",
+	"deepseek-reasoner",
+	"claude-opus",
+	"claude-sonnet",
+	"gemini-3-pro",
+	"gemini-3.5-flash",
+	"gemini-3.6-flash",
+	"gemini-3.7-flash",
+	"gemini-3.8-flash",
+	"gpt-5",
+	"gpt-6",
+	"o1",
+	"o3",
+	"o4",
+	"glm-5",
+	"grok-4",
+	"nemotron-3",
+	"kimi-k2",
+	"kimi-k3",
+	"qwen3.7",
+	"qwen3.8",
+	"minimax-m2",
+	"step-3.7",
+];
+
+// Vendor/model families that accept image input.
+const IMAGE_PATTERNS = [
+	"gemini",
+	"gpt-4o",
+	"gpt-5-image",
+	"gpt-5.4-vision",
+	"glm-4.6v",
 	"claude-opus",
 	"claude-sonnet",
 	"claude-haiku",
-	"gemini",
-	"gpt-4o",
-	"gpt-5",
+	"deepseek-v4-flash-vision",
+	"qwen3.5-omni",
+	"mimo-v2-omni",
 ];
-const supportsImages = (id: string): boolean => {
-	const s = id.toLowerCase();
-	return IMAGE_FAMILIES.some((f) => s.includes(f));
-};
+
+const supportsImages = (id: string): boolean => IMAGE_PATTERNS.some((p) => id.toLowerCase().includes(p));
+
+// Context windows per vendor/model family (defaults for unknown models).
+const CONTEXT_WINDOWS: Array<[RegExp, number]> = [
+	[/^google\//, 1_000_000],
+	[/gemini/, 1_000_000],
+	[/^openai\/gpt-5|^openai\/gpt-6|^openai\/o[134]/, 400_000],
+	[/^anthropic\//, 200_000],
+	[/^deepseek\//, 128_000],
+	[/^z-ai\/glm/, 200_000],
+	[/^moonshotai\//, 256_000],
+	[/^minimax\//, 200_000],
+	[/^qwen/, 1_000_000],
+	[/^x-ai\//, 256_000],
+];
 
 function getContextWindow(id: string): number {
-	if (id.includes("gemini")) return 1000000;
-	if (id.includes("claude")) return 200000;
-	if (id.includes("gpt-5")) return 200000;
-	if (id.includes("gpt-4o")) return 128000;
-	if (id.includes("deepseek")) return 128000;
-	if (id.includes("o1") || id.includes("o3")) return 200000;
-	if (id.includes("mistral")) return 128000;
-	if (id.includes("llama")) return 128000;
-	return 128000;
-}
-
-function getMaxTokens(id: string): number {
-	if (id.includes("gemini")) return 65536;
-	if (id.includes("claude-opus")) return 32000;
-	if (id.includes("claude-sonnet")) return 16384;
-	if (id.includes("gpt-5")) return 32768;
-	if (id.includes("gpt-4o")) return 16384;
-	if (id.includes("deepseek")) return 16384;
-	if (id.includes("o1") || id.includes("o3")) return 32768;
-	if (id.includes("mistral")) return 16384;
-	return 16384;
-}
-
-export default async function tokenrouterProvider(pi: ExtensionAPI) {
-	const apiKey = await readApiKey();
-	// No key configured -> don't register the provider (avoids unauthenticated calls).
-	if (!apiKey) return;
-
-	let models: TokenRouterModel[] = [];
-
-	try {
-		const response = await fetch(`${BASE_URL}/models`, {
-			headers: { Authorization: `Bearer ${apiKey}` },
-			signal: AbortSignal.timeout(10000),
-		});
-		const payload = (await response.json()) as { data?: TokenRouterModel[] };
-		// Throw on non-OK or malformed payloads so the fallback catalog below kicks in
-		// instead of crashing the extension (payload.data is undefined on e.g. 401).
-		if (!response.ok || !Array.isArray(payload.data)) {
-			throw new Error(`models fetch failed (HTTP ${response.status})`);
-		}
-		models = payload.data;
-	} catch {
-		// Fallback: register with a known subset so the provider is still usable
-		// even when the catalog endpoint is unreachable at startup.
-		models = [
-			{ id: "claude-sonnet-4-6", owned_by: "Anthropic", pricing: { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015 } },
-			{ id: "claude-opus-4-7", owned_by: "Anthropic", pricing: { inputCostPerToken: 0.000005, outputCostPerToken: 0.000025 } },
-			{ id: "gemini-2.5-flash", owned_by: "Google", pricing: { inputCostPerToken: 0.000001, outputCostPerToken: 0.000001 } },
-			{ id: "gemini-2.5-pro", owned_by: "Google", pricing: { inputCostPerToken: 0.00000125, outputCostPerToken: 0.00001 } },
-			{ id: "gpt-5.4", owned_by: "OpenAI", pricing: { inputCostPerToken: 0.0000025, outputCostPerToken: 0.000015 } },
-			{ id: "gpt-4o", owned_by: "OpenAI", pricing: { inputCostPerToken: 0.0000025, outputCostPerToken: 0.00001 } },
-			{ id: "deepseek-ai/deepseek-v4-flash", owned_by: "DeepSeek", pricing: { inputCostPerToken: 0.00000014, outputCostPerToken: 0.00000028 } },
-			{ id: "mistral-large-latest", owned_by: "Mistral", pricing: { inputCostPerToken: 0.000002, outputCostPerToken: 0.000006 } },
-		];
+	for (const [pattern, size] of CONTEXT_WINDOWS) {
+		if (pattern.test(id)) return size;
 	}
+	return 128_000;
+}
 
+function toPiModel(model: TokenRouterModel) {
+	const id = model.id;
+	return {
+		id,
+		api: "openai-completions" as const,
+		name: `${titleize(id)} (TokenRouter)`,
+		reasoning: REASONING_PATTERNS.some((p) => id.toLowerCase().includes(p)),
+		input: supportsImages(id) ? (["text", "image"] as const) : (["text"] as const),
+		contextWindow: getContextWindow(id),
+		maxTokens: 16384,
+		// The catalog doesn't expose pricing; 0 avoids fake cost math.
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		compat: {
+			supportsDeveloperRole: false,
+			maxTokensField: "max_tokens" as const,
+		},
+	};
+}
+
+function register(pi: ExtensionAPI, apiKey: string, models: TokenRouterModel[]): void {
 	pi.registerProvider("tokenrouter", {
 		name: "TokenRouter",
 		baseUrl: BASE_URL,
@@ -154,23 +209,35 @@ export default async function tokenrouterProvider(pi: ExtensionAPI) {
 		apiKey,
 		api: "openai-completions",
 		authHeader: true,
-		models: models.map((m) => ({
-			id: m.id,
-			name: `${m.id} (TokenRouter)`,
-			reasoning: REASONING_MODELS.has(m.id),
-			input: supportsImages(m.id) ? ["text", "image"] as const : ["text"] as const,
-			cost: {
-				input: (m.pricing?.inputCostPerToken ?? 0) * 1_000_000,
-				output: (m.pricing?.outputCostPerToken ?? 0) * 1_000_000,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: getContextWindow(m.id),
-			maxTokens: getMaxTokens(m.id),
-			compat: {
-				supportsDeveloperRole: false,
-				maxTokensField: "max_tokens" as const,
-			},
-		})),
+		models: models.map(toPiModel),
 	});
+}
+
+export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<void> {
+	const apiKey = await readApiKey();
+	if (!apiKey) {
+		console.warn(
+			"[tokenrouter-provider] No API key found — set TOKENROUTER_API_KEY or add a `tokenrouter` entry to ~/.pi/agent/auth.json. TokenRouter models will not be listed.",
+		);
+		return;
+	}
+
+	try {
+		const models = await fetchModels(apiKey);
+		await writeCache(models);
+		register(pi, apiKey, models);
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		const cached = await loadCache();
+		if (cached.length > 0) {
+			register(pi, apiKey, cached);
+			console.warn(
+				`[tokenrouter-provider] Model fetch failed (${reason}); using ${cached.length} cached models from ${cachePath()}.`,
+			);
+		} else {
+			console.warn(
+				`[tokenrouter-provider] Model fetch failed (${reason}) and no cache is available. Check the base URL (${BASE_URL}) and that the key is valid.`,
+			);
+		}
+	}
 }
