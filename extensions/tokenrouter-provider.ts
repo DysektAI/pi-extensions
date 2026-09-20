@@ -181,6 +181,44 @@ function getContextWindow(id: string): number {
 	return 128_000;
 }
 
+/**
+ * Reasoning-effort maps per vendor/model family, mirroring pi's built-in
+ * provider catalogs (packages/ai/dist/providers/data/*.json). Levels set to
+ * null are hidden by pi; unset keys fall back to pass-through. `xhigh`/`max`
+ * are only offered when explicitly listed here (getSupportedThinkingLevels).
+ *
+ * Off maps to "none" only for families with a documented none value; families
+ * without one use null (toggle reasoning off client-side instead).
+ */
+const THINKING_LEVEL_MAPS: Array<{ pattern: RegExp; map: Record<string, string | null> }> = [
+	// Z.AI GLM-5.3/5.2 always reason; TokenRouter upstream rejects disabling
+	// ("cannot be disabled; please use low, high, or max").
+	{ pattern: /glm-5\.3|glm-5\.2/, map: { off: null, minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: "max" } },
+	{ pattern: /glm/, map: { off: "none", minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null } },
+	// DeepSeek V4: high/max only (V4 advertises max natively)
+	{ pattern: /deepseek-v4/, map: { off: null, minimal: null, low: null, medium: null, high: "high", xhigh: null, max: "max" } },
+	{ pattern: /deepseek/, map: { off: null, minimal: null, low: "low", medium: null, high: "high", max: "max" } },
+	// Moonshot Kimi K3: off/low/high/max
+	{ pattern: /kimi-k3/, map: { off: null, minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: "max" } },
+	{ pattern: /kimi/, map: { off: null } },
+	// OpenAI gpt-5/6, o-series: minimal..xhigh where supported
+	{ pattern: /^openai\/gpt-5\.2|^openai\/gpt-5\.3|^openai\/gpt-5\.4|^openai\/gpt-5\.5|^openai\/gpt-5\.6|^openai\/gpt-6/, map: { off: "none", minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: null } },
+	{ pattern: /^openai\/gpt-5($|[^.])|^openai\/gpt-5\.0|^openai\/gpt-5\.1/, map: { off: null, minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: null, max: null } },
+	{ pattern: /^openai\/o[134]/, map: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null } },
+	// xAI Grok: 4.6 adds xhigh
+	{ pattern: /grok-4\.6/, map: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: null } },
+	{ pattern: /grok/, map: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null } },
+	// Anthropic Claude: low..max (adaptive; pi clamps internally)
+	{ pattern: /claude/, map: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: "max" } },
+];
+
+function getThinkingLevelMap(id: string): Record<string, string | null> | undefined {
+	for (const { pattern, map } of THINKING_LEVEL_MAPS) {
+		if (pattern.test(id.toLowerCase())) return map;
+	}
+	return undefined;
+}
+
 function toPiModel(model: TokenRouterModel) {
 	const id = model.id;
 	return {
@@ -191,11 +229,13 @@ function toPiModel(model: TokenRouterModel) {
 		input: supportsImages(id) ? (["text", "image"] as const) : (["text"] as const),
 		contextWindow: getContextWindow(id),
 		maxTokens: 16384,
+		thinkingLevelMap: getThinkingLevelMap(id),
 		// The catalog doesn't expose pricing; 0 avoids fake cost math.
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		compat: {
 			supportsDeveloperRole: false,
 			maxTokensField: "max_tokens" as const,
+			supportsReasoningEffort: true,
 		},
 	};
 }
