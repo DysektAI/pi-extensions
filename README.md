@@ -70,6 +70,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `subagent` | Subagent helpers ([docs](extensions/subagent/README.md)) |
 | `credential-pool` | API-key / OAuth pool rotation (example config only) |
 | `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
+| `tokenrouter-provider` | Optional TokenRouter intelligent routing provider (`TOKENROUTER_API_KEY`) |
 | `_shared/model-roles` | Shared role helpers (title/recap/judge/subagent) |
 | `_shared/config-settings` | Registry for extension settings shown in `/config` |
 
