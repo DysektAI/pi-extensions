@@ -50,11 +50,17 @@ npm test
 ```
 
 Test files live next to the code they cover as `extensions/<name>/tests.ts` and
-must only import from dependency-free modules (e.g. `pure.ts`), never from
-`@earendil-works/*`. When you add a new test file, append it to the `test`
-script in `package.json` — CI (`.github/workflows/ci.yml`) runs
+must only import from dependency-free modules (e.g. `pure.ts`, `client.ts`),
+never from `@earendil-works/*`. When you add a new test file, append it to the
+`test` script in `package.json` — CI (`.github/workflows/ci.yml`) runs
 `npm run verify` on every push to `main` and every PR, on Ubuntu, Windows, and
 macOS across Node 20 and 22.
+
+## Secrets
+
+No shipped extension may contain a live credential, trial key, or fallback token.
+`typesafe` is the reference pattern: env-only key, no network call when unset,
+and `TYPESAFE_AUTO` opt-in for anything that transmits prompt text.
 
 ## Releases
 

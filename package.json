@@ -1,6 +1,6 @@
 {
   "name": "@dysektai/pi-extensions",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Public-safe Pi coding-agent extensions (config menu, tasks, search, LSP, goal loop, UX helpers, and more).",
   "keywords": ["pi-package", "pi", "coding-agent", "extensions"],
   "license": "MIT",
@@ -17,17 +17,19 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/tokenrouter/tests.ts",
+    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts",
     "verify": "npm test"
   },
   "devDependencies": {
     "tsx": "^4.23.12"
   },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
   },
   "files": [
     "extensions/",
+    "skills/",
     "LICENSE",
     "README.md"
   ]

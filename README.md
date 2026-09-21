@@ -15,7 +15,7 @@ Install once, then enable/disable individual extensions with `pi config` or pack
 
 ```bash
 # pinned release
-pi install git:github.com/DysektAI/pi-extensions@v0.3.1
+pi install git:github.com/DysektAI/pi-extensions@v0.4.0
 
 # or latest main (less safe for production pins)
 pi install git:github.com/DysektAI/pi-extensions
@@ -24,7 +24,7 @@ pi install git:github.com/DysektAI/pi-extensions
 Private machines with SSH:
 
 ```bash
-pi install git:git@github.com:DysektAI/pi-extensions@v0.3.1
+pi install git:git@github.com:DysektAI/pi-extensions@v0.4.0
 ```
 
 Local checkout (dev — edits apply live, no copy):
@@ -43,7 +43,7 @@ pi install C:\Users\You\Documents\Github\pi-extensions
 
 ```bash
 pi list
-pi update git:github.com/DysektAI/pi-extensions@v0.3.1   # bump pin
+pi update git:github.com/DysektAI/pi-extensions@v0.4.0   # bump pin
 pi remove git:github.com/DysektAI/pi-extensions
 ```
 
@@ -71,7 +71,9 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `credential-pool` | API-key / OAuth pool rotation (example config only) |
 | `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
 | `tokenrouter-provider` | Optional TokenRouter routing provider (`api.tokenrouter.com`); key from `~/.pi/agent/auth.json` `tokenrouter` entry or `TOKENROUTER_API_KEY`. Infers reasoning/image/context/thinking-level metadata via [pure.ts](extensions/tokenrouter/pure.ts) |
+| `typesafe` | TypeSafe/Jev decision model as the `typesafe_ask` tool (noul/choice/score), `/jev` status, optional opt-in prompt pre-checks. Needs `TYPESAFE_API_KEY`; never bundles a credential ([docs](extensions/typesafe/README.md)) |
 | `_shared/model-roles` | Shared role helpers (title/recap/judge/subagent) |
+| `skills/typesafe-ai` | Pi skill for designing TypeSafe integrations (primitives, state, fan-out); ships with the `typesafe` extension |
 | `_shared/config-settings` | Registry for extension settings shown in `/config` |
 
 ## `/config`
@@ -122,13 +124,21 @@ Brand-specific or machine-private pieces stay elsewhere:
 Those belong in a private package or a personal profile repo (e.g. an agent kit),
 not this public install unit.
 
+## TypeSafe / Jev
+
+`extensions/typesafe` needs `TYPESAFE_API_KEY` in the environment that launches Pi.
+It deliberately has no fallback key: without it, `typesafe_ask` sends nothing and
+reports setup guidance once. Automatic per-prompt consultation is opt-in via
+`TYPESAFE_AUTO=on` because it transmits prompt text. See
+[extensions/typesafe/README.md](extensions/typesafe/README.md).
+
 ## Optional: load a subset
 
 ```json
 {
   "packages": [
     {
-      "source": "git:github.com/DysektAI/pi-extensions@v0.3.1",
+      "source": "git:github.com/DysektAI/pi-extensions@v0.4.0",
       "extensions": [
         "extensions/config.ts",
         "extensions/session-recap.ts",
