@@ -116,8 +116,13 @@ function titleize(id: string): string {
 }
 
 // Substring matches over vendor/model IDs. Ordered most-specific first.
+// The TokenRouter catalogue exposes no reasoning capability flag (only a
+// free-text `tags` field), so reasoning support is inferred from the ID.
 const REASONING_PATTERNS = [
-	"deepseek-v4-pro",
+	// Whole DeepSeek V4 family (v4-pro, v4-flash, v4.1-flash, ...) emits
+	// reasoning_content; keep this prefix broad so new V4 point releases are
+	// covered without another hardcoded entry.
+	"deepseek-v4",
 	"deepseek-v3.2",
 	"deepseek-reasoner",
 	"claude-opus",
