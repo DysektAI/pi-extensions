@@ -14,16 +14,23 @@ code and the agent can act on.
 
 ## Setup
 
-```bash
-export TYPESAFE_API_KEY="tsk_..."   # required
-```
+Credentials resolve in this order, and the extension never ships one:
 
-Set it in the environment that launches Pi, then restart Pi. The extension never
-ships a bundled or trial credential.
+1. `typesafe` entry in `~/.pi/agent/auth.json` (machine-private, not synced):
+
+   ```json
+   { "typesafe": { "type": "api_key", "key": "tsk_..." } }
+   ```
+
+   A plain string (`{ "typesafe": "tsk_..." }`) also works.
+2. `TYPESAFE_API_KEY` in the environment that launches Pi.
+
+Restart Pi after changing either. With no credential the tool sends nothing and
+reports the setup step once; `/jev` shows the current state.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TYPESAFE_API_KEY` | *(none)* | Required. Without it the tool reports setup guidance and sends nothing |
+| `TYPESAFE_API_KEY` | *(none)* | Fallback when `auth.json` has no `typesafe` entry |
 | `TYPESAFE_MODEL` | `jev-latest` | Model id or alias |
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | Must be HTTPS, without credentials, query, or fragment |
 | `TYPESAFE_AUTO` | `off` | `on` consults Jev on eligible prompts before the agent starts |
@@ -68,5 +75,6 @@ pre-checks) and honors cancellation.
 
 ## Development
 
-Pure client logic lives in `client.ts` and is covered by `tests.ts`
-(`npm test`). Keep that module free of `@earendil-works/*` imports.
+Pure client logic lives in `client.ts` (question/response validation, credential
+resolution) and is covered by `tests.ts` (`npm test`). Keep that module free of
+`@earendil-works/*` imports. The extension is a thin Pi wrapper over it.

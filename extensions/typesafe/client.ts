@@ -1,3 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 // Dependency-free HTTP client: also exercised without a Pi runtime or live credentials.
 export interface Question {
   id?: string;
@@ -16,7 +20,7 @@ const record = (v: unknown): v is Record<string, unknown> => v !== null && typeo
 const rubric = (v: unknown): boolean => typeof v === "string" || record(v) || Array.isArray(v);
 const probability = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
 
-export function readConfig(env: Record<string, string | undefined>): Config {
+export function readConfig(env: Record<string, string | undefined>, apiKey?: string): Config {
   const baseUrl = (env.TYPESAFE_BASE_URL?.trim() || "https://api.typesafe.ai/v1").replace(/\/+$/, "");
   const url = new URL(baseUrl);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
@@ -25,12 +29,38 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   const threshold = Number(env.TYPESAFE_AUTO_THRESHOLD?.trim() || "0.5");
   if (!probability(threshold)) throw new Error("TYPESAFE_AUTO_THRESHOLD must be between 0 and 1.");
   return {
-    apiKey: env.TYPESAFE_API_KEY?.trim() || "",
+    apiKey: apiKey?.trim() || env.TYPESAFE_API_KEY?.trim() || "",
     baseUrl,
     model: env.TYPESAFE_MODEL?.trim() || "jev-latest",
     auto: env.TYPESAFE_AUTO === "on",
     threshold,
   };
+}
+
+/** Extracts one provider credential from a parsed Pi auth.json, accepting both the plain-string and typed forms. */
+export function parseAuthKey(auth: unknown, provider: string): string | undefined {
+  if (!record(auth)) return undefined;
+  const entry = auth[provider];
+  if (typeof entry === "string" && entry.trim()) return entry.trim();
+  if (record(entry) && typeof entry.key === "string" && entry.key.trim()) return entry.key.trim();
+  return undefined;
+}
+
+/**
+ * Machine-private credential resolution: `~/.pi/agent/auth.json` first (persistent,
+ * no env var needed), then TYPESAFE_API_KEY. Never throws.
+ */
+export async function resolveApiKey(env: Record<string, string | undefined> = process.env): Promise<string | undefined> {
+  try {
+    const dir = env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
+    const key = parseAuthKey(JSON.parse(await readFile(join(dir, "auth.json"), "utf8")), "typesafe");
+    if (key) return key;
+  } catch { /* No auth.json entry; fall back to the environment. */ }
+  return env.TYPESAFE_API_KEY?.trim() || undefined;
+}
+
+export async function config(env: Record<string, string | undefined> = process.env): Promise<Config> {
+  return readConfig(env, await resolveApiKey(env));
 }
 
 export function buildRequest(stateText: string, questions: Question[], model: string) {
@@ -98,7 +128,7 @@ export async function ask(
   config: Config, request: ReturnType<typeof buildRequest>, signal?: AbortSignal,
   timeoutMs = 30_000, fetcher: typeof fetch = fetch,
 ): Promise<Result> {
-  if (!config.apiKey) throw new Error("Set TYPESAFE_API_KEY in the environment that launches Pi, then restart Pi. Jev is a tool, not a subagent.");
+  if (!config.apiKey) throw new Error("No TypeSafe credential. Add a `typesafe` entry to ~/.pi/agent/auth.json (or set TYPESAFE_API_KEY), then restart Pi. Jev is a tool, not a subagent.");
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });

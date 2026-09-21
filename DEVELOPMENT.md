@@ -59,8 +59,9 @@ macOS across Node 20 and 22.
 ## Secrets
 
 No shipped extension may contain a live credential, trial key, or fallback token.
-`typesafe` is the reference pattern: env-only key, no network call when unset,
-and `TYPESAFE_AUTO` opt-in for anything that transmits prompt text.
+`typesafe` is the reference pattern: a machine-private `~/.pi/agent/auth.json`
+entry (env var as fallback), no network call when unconfigured, and
+`TYPESAFE_AUTO` opt-in for anything that transmits prompt text.
 
 ## Releases
 

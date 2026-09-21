@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { ask, buildRequest, precheck, readConfig, validateResponse } from "./client.js";
+import { ask, buildRequest, config as resolveConfig, parseAuthKey, precheck, readConfig, resolveApiKey, validateResponse } from "./client.js";
 
 const config = readConfig({ TYPESAFE_API_KEY: "test-only-not-a-real-key" });
 const questions = [{ type: "noul" as const, instructions: "Is this useful?" }];
@@ -58,6 +61,25 @@ test("validates responses and expected answer IDs", () => {
   assert.throws(() => validateResponse({ ...valid, answers: { ...valid.answers, q1: { ...valid.answers.q1, choice: "unknown" } } }, req));
 });
 
+test("credentials come from auth.json first, then the environment", async () => {
+  assert.equal(parseAuthKey({ typesafe: "key-a" }, "typesafe"), "key-a");
+  assert.equal(parseAuthKey({ typesafe: { key: " key-b " } }, "typesafe"), "key-b");
+  assert.equal(parseAuthKey({ typesafe: { type: "api_key", key: "key-c" } }, "typesafe"), "key-c");
+  for (const auth of [null, [], {}, { typesafe: "" }, { typesafe: { key: 3 } }, { other: "key" }]) assert.equal(parseAuthKey(auth, "typesafe"), undefined);
+  assert.equal(parseAuthKey({ typesafe: "key-a" }, "other"), undefined);
+
+  const dir = await mkdtemp(join(tmpdir(), "typesafe-auth-"));
+  const env = { PI_CODING_AGENT_DIR: dir, TYPESAFE_API_KEY: "env-key" };
+  assert.equal(await resolveApiKey(env), "env-key");
+  await writeFile(join(dir, "auth.json"), JSON.stringify({ typesafe: { type: "api_key", key: "file-key" } }));
+  assert.equal(await resolveApiKey(env), "file-key");
+  assert.equal((await resolveConfig(env)).apiKey, "file-key");
+  await writeFile(join(dir, "auth.json"), "not json");
+  assert.equal(await resolveApiKey(env), "env-key");
+  assert.equal(await resolveApiKey({ PI_CODING_AGENT_DIR: join(dir, "missing") }), undefined);
+  assert.equal((await resolveConfig({ PI_CODING_AGENT_DIR: dir })).apiKey, "");
+});
+
 test("HTTP client sends contract and honors overrides", async () => {
   const fetcher: typeof fetch = async (url, init) => {
     assert.equal(url, "https://api.typesafe.ai/v1/systemone");
@@ -74,7 +96,7 @@ test("missing key does not send; errors never echo upstream secrets", async () =
   const fetcher: typeof fetch = async () => { calls++; return new Response("secret-body", { status: 401 }); };
   await assert.rejects(ask({ ...config, apiKey: "" }, request, undefined, 100, fetcher), /TYPESAFE_API_KEY/);
   assert.equal(calls, 0);
-  await assert.rejects(ask(config, request, undefined, 100, fetcher), e => e instanceof Error && e.message.includes("401") && !e.message.includes("secret-body"));
+  await assert.rejects(ask(config, request, undefined, 100, fetcher), (e: unknown) => e instanceof Error && e.message.includes("401") && !e.message.includes("secret-body"));
   await assert.rejects(ask(config, request, undefined, 100, async () => { throw new Error("secret-network-details"); }), /network request failed/);
   await assert.rejects(ask(config, request, undefined, 100, async () => new Response("not json")), /invalid JSON/);
   await assert.rejects(ask(config, request, undefined, 100, async () => new Response("x".repeat(512 * 1024 + 1))), /512 KiB/);
