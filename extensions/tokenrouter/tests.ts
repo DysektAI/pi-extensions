@@ -29,11 +29,13 @@ import assert from "node:assert/strict";
 
 import {
 	DEFAULT_CONTEXT_WINDOW,
+	DEFAULT_MAX_OUTPUT_TOKENS,
 	IMAGE_PATTERNS,
 	REASONING_HEURISTICS,
 	REASONING_OVERRIDES,
 	extractModels,
 	getContextWindow,
+	getMaxTokens,
 	getThinkingLevelMap,
 	isChatModel,
 	isReasoningModel,
@@ -171,6 +173,8 @@ describe("supportsImages", () => {
 		assert.equal(supportsImages("qwen/qwen3.5-omni-plus"), true);
 		assert.equal(supportsImages("z-ai/glm-4.6v"), true);
 		assert.equal(supportsImages("anthropic/claude-haiku-4-5"), true);
+		// V4.1 Flash is natively multimodal despite the text-only catalogue tag.
+		assert.equal(supportsImages("deepseek/deepseek-v4.1-flash"), true);
 	});
 
 	it("defaults to text-only", () => {
@@ -183,14 +187,38 @@ describe("getContextWindow", () => {
 	it("returns per-vendor defaults and a fallback", () => {
 		assert.equal(getContextWindow("anthropic/claude-opus-5-huo"), 200_000);
 		assert.equal(getContextWindow("qwen/qwen3.5-9b"), 1_000_000);
+		// V4.1 Flash advertises 1M; other DeepSeek variants keep the 128k default.
+		assert.equal(getContextWindow("deepseek/deepseek-v4.1-flash"), 1_000_000);
+		assert.equal(getContextWindow("deepseek/deepseek-v4-pro"), 128_000);
 		assert.equal(getContextWindow("totally/unknown-model"), DEFAULT_CONTEXT_WINDOW);
 	});
 });
 
+describe("getMaxTokens", () => {
+	it("returns verified caps and a safe fallback", () => {
+		assert.equal(getMaxTokens("deepseek/deepseek-v4.1-flash"), 393_216);
+		assert.equal(getMaxTokens("deepseek/deepseek-v4-flash-vision-exp"), 393_216);
+		assert.equal(getMaxTokens("openai/gpt-oss-120b"), DEFAULT_MAX_OUTPUT_TOKENS);
+	});
+});
+
 describe("getThinkingLevelMap", () => {
-	it("exposes only high/max for the DeepSeek V4 family", () => {
+	it("exposes the full effort enum for DeepSeek V4.1 Flash", () => {
 		const map = getThinkingLevelMap("deepseek/deepseek-v4.1-flash");
-		assert.deepEqual(map, { off: null, minimal: null, low: null, medium: null, high: "high", xhigh: null, max: "max" });
+		assert.deepEqual(map, {
+			off: "none",
+			minimal: "minimal",
+			low: "low",
+			medium: "medium",
+			high: "high",
+			xhigh: "xhigh",
+			max: "max",
+		});
+	});
+
+	it("exposes low..max (no off) for other DeepSeek V4 variants", () => {
+		const map = getThinkingLevelMap("deepseek/deepseek-v4-pro");
+		assert.deepEqual(map, { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" });
 	});
 
 	it("keeps GLM-5.3 always-on (no off value)", () => {
@@ -219,7 +247,10 @@ describe("toPiModel", () => {
 		});
 		assert.equal(reasoning.reasoning, true);
 		assert.equal(reasoning.api, "openai-completions");
-		assert.deepEqual(reasoning.input, ["text"]);
+		// V4.1 Flash is multimodal despite the text-only catalogue tag.
+		assert.deepEqual(reasoning.input, ["text", "image"]);
+		assert.equal(reasoning.contextWindow, 1_000_000);
+		assert.equal(reasoning.maxTokens, 393_216);
 		assert.equal(reasoning.compat.maxTokensField, "max_tokens");
 		assert.ok(reasoning.name.includes("TokenRouter"));
 	});

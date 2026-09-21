@@ -162,6 +162,7 @@ export const IMAGE_PATTERNS: string[] = [
 	"claude-sonnet",
 	"claude-haiku",
 	"deepseek-v4-flash-vision",
+	"deepseek-v4.1-flash",
 	"qwen3.5-omni",
 	"mimo-v2-omni",
 ];
@@ -179,6 +180,9 @@ export const CONTEXT_WINDOWS: Array<[RegExp, number]> = [
 	[/gemini/, 1_000_000],
 	[/^openai\/gpt-5|^openai\/gpt-6|^openai\/o[134]/, 400_000],
 	[/^anthropic\//, 200_000],
+	// DeepSeek V4.1 Flash: 1M-token context (model card; verified live with a
+	// 170k-token prompt). Must precede the generic deepseek rule.
+	[/deepseek-v4\.1-flash/, 1_000_000],
 	[/^deepseek\//, 128_000],
 	[/^z-ai\/glm/, 200_000],
 	[/^moonshotai\//, 256_000],
@@ -194,6 +198,28 @@ export function getContextWindow(id: string): number {
 		if (pattern.test(id)) return size;
 	}
 	return DEFAULT_CONTEXT_WINDOW;
+}
+
+// ── Max output tokens ───────────────────────────────────────────────────────
+
+/**
+ * Maximum output tokens per vendor/model family. The catalogue does not publish
+ * this either, so models with a verified higher cap get an explicit entry
+ * (TokenRouter rejects larger values with "Invalid max_tokens value, the valid
+ * range ...").
+ */
+export const MAX_OUTPUT_TOKENS: Array<[RegExp, number]> = [
+	// Verified live 2026-09-21: range [1, 393216] for both.
+	[/deepseek-v4\.1-flash|deepseek-v4-flash-vision/, 393_216],
+];
+
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
+
+export function getMaxTokens(id: string): number {
+	for (const [pattern, size] of MAX_OUTPUT_TOKENS) {
+		if (pattern.test(id)) return size;
+	}
+	return DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 // ── Thinking levels ─────────────────────────────────────────────────────────
@@ -218,10 +244,19 @@ export const THINKING_LEVEL_MAPS: Array<{ pattern: RegExp; map: Record<string, s
 		pattern: /glm/,
 		map: { off: "none", minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null },
 	},
-	// DeepSeek V4: high/max only (V4 advertises max natively).
+	// DeepSeek V4.1 Flash: full 7-level enum. Verified live 2026-09-21 — the
+	// gateway accepts none/minimal/low/medium/high/xhigh/max, and `none` returns
+	// no reasoning_content (thinking off). Must precede the generic V4 rule.
+	{
+		pattern: /deepseek-v4\.1-flash/,
+		map: { off: "none", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+	},
+	// Other DeepSeek V4 variants (v4-flash, v4-pro): low..max only. Verified live:
+	// none/minimal are rejected with "'reasoning_effort' must be one of: 'low',
+	// 'medium', 'high', 'xhigh', 'max'".
 	{
 		pattern: /deepseek-v4/,
-		map: { off: null, minimal: null, low: null, medium: null, high: "high", xhigh: null, max: "max" },
+		map: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
 	},
 	{
 		pattern: /deepseek/,
@@ -281,7 +316,7 @@ export function toPiModel(model: TokenRouterModel) {
 		reasoning: isReasoningModel(id),
 		input: supportsImages(id) ? (["text", "image"] as const) : (["text"] as const),
 		contextWindow: getContextWindow(id),
-		maxTokens: 16384,
+		maxTokens: getMaxTokens(id),
 		thinkingLevelMap: getThinkingLevelMap(id),
 		// The catalog doesn't expose pricing; 0 avoids fake cost math.
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
