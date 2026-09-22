@@ -222,6 +222,37 @@ export function getMaxTokens(id: string): number {
 	return DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
+// ── Max-tokens request field ───────────────────────────────────────────────
+
+/**
+ * OpenAI's current-generation chat models (GPT-5.x/6.x, o-series) reject the
+ * legacy `max_tokens` parameter with "Unsupported parameter: 'max_tokens' is
+ * not supported with this model. Use 'max_completion_tokens' instead.", so
+ * OpenAI-family ids must send `max_completion_tokens`. The other vendors on
+ * TokenRouter accept (and some require) the legacy `max_tokens` field.
+ */
+export const MAX_COMPLETION_TOKENS_PATTERN = /^openai\/(gpt-5|gpt-6|gpt-oss|o[134])/;
+
+export function getMaxTokensField(id: string): "max_tokens" | "max_completion_tokens" {
+	return MAX_COMPLETION_TOKENS_PATTERN.test(id.toLowerCase()) ? "max_completion_tokens" : "max_tokens";
+}
+
+/**
+ * Native OpenAI GPT-5.x/6.x and o-series models on TokenRouter are served from
+ * OpenAI's own upstream, whose /v1/chat/completions rejects combining function
+ * tools with reasoning_effort ("Function tools with reasoning_effort are not
+ * supported ... use /v1/responses or set reasoning_effort to 'none'"). Since a
+ * coding agent always sends tools, these ids are registered against the
+ * Responses API instead. openai/* ids served by third-party upstreams (e.g.
+ * gpt-oss via AkashML) still accept tools + reasoning_effort on chat
+ * completions and keep the completions API. Verified live 2026-09-21.
+ */
+export const RESPONSES_API_PATTERN = /^openai\/(gpt-5|gpt-6|o[134])/;
+
+export function getModelApi(id: string): "openai-completions" | "openai-responses" {
+	return RESPONSES_API_PATTERN.test(id.toLowerCase()) ? "openai-responses" : "openai-completions";
+}
+
 // ── Thinking levels ─────────────────────────────────────────────────────────
 
 /**
@@ -268,10 +299,13 @@ export const THINKING_LEVEL_MAPS: Array<{ pattern: RegExp; map: Record<string, s
 		map: { off: null, minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: "max" },
 	},
 	{ pattern: /kimi/, map: { off: null } },
-	// OpenAI gpt-5/6, o-series: minimal..xhigh where supported.
+	// OpenAI gpt-5.2+ and gpt-6: minimal..max. Verified live 2026-09-21 against
+	// TokenRouter's /v1/responses: gpt-6-luna accepts effort xhigh and max (and
+	// pi's built-in openai provider exposes the same levels for gpt-5.6-*). The
+	// newer OpenAI upstreams live on /v1/responses (see RESPONSES_API_PATTERN).
 	{
 		pattern: /^openai\/gpt-5\.2|^openai\/gpt-5\.3|^openai\/gpt-5\.4|^openai\/gpt-5\.5|^openai\/gpt-5\.6|^openai\/gpt-6/,
-		map: { off: "none", minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: null },
+		map: { off: "none", minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
 	},
 	{
 		pattern: /^openai\/gpt-5($|[^.])|^openai\/gpt-5\.0|^openai\/gpt-5\.1/,
@@ -311,7 +345,7 @@ export function toPiModel(model: TokenRouterModel) {
 	const id = model.id;
 	return {
 		id,
-		api: "openai-completions" as const,
+		api: getModelApi(id),
 		name: `${titleize(id)} (TokenRouter)`,
 		reasoning: isReasoningModel(id),
 		input: supportsImages(id) ? (["text", "image"] as const) : (["text"] as const),
@@ -322,7 +356,7 @@ export function toPiModel(model: TokenRouterModel) {
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		compat: {
 			supportsDeveloperRole: false,
-			maxTokensField: "max_tokens" as const,
+			maxTokensField: getMaxTokensField(id),
 			supportsReasoningEffort: true,
 		},
 	};

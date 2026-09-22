@@ -255,6 +255,42 @@ describe("toPiModel", () => {
 		assert.ok(reasoning.name.includes("TokenRouter"));
 	});
 
+	it("sends max_completion_tokens for OpenAI-family models", () => {
+		const model = toPiModel({ id: "openai/gpt-6-luna", supported_endpoint_types: ["openai"] });
+		assert.equal(model.compat.maxTokensField, "max_completion_tokens");
+	});
+
+	it("exposes the full openai effort range including max for gpt-5.2+/gpt-6", () => {
+		const map = getThinkingLevelMap("openai/gpt-6-luna");
+		assert.equal(map?.off, "none");
+		assert.equal(map?.minimal, null);
+		assert.equal(map?.high, "high");
+		assert.equal(map?.xhigh, "xhigh");
+		assert.equal(map?.max, "max");
+		// Older families keep the conservative caps.
+		assert.equal(getThinkingLevelMap("openai/gpt-5.1")?.max, null);
+		assert.equal(getThinkingLevelMap("openai/o3")?.max, null);
+	});
+
+	it("registers native OpenAI reasoning models on the Responses API", () => {
+		// Their chat-completions endpoint rejects tools + reasoning_effort.
+		assert.equal(toPiModel({ id: "openai/gpt-6-luna", supported_endpoint_types: ["openai"] }).api, "openai-responses");
+		assert.equal(toPiModel({ id: "openai/gpt-5.6-sol", supported_endpoint_types: ["openai"] }).api, "openai-responses");
+		assert.equal(toPiModel({ id: "openai/o3", supported_endpoint_types: ["openai"] }).api, "openai-responses");
+	});
+
+	it("keeps third-party-upstream and non-OpenAI models on chat completions", () => {
+		// gpt-oss is served via AkashML, which accepts tools + reasoning_effort.
+		assert.equal(toPiModel({ id: "openai/gpt-oss-120b", supported_endpoint_types: ["openai"] }).api, "openai-completions");
+		assert.equal(toPiModel({ id: "z-ai/glm-5.3", supported_endpoint_types: ["openai"] }).api, "openai-completions");
+		assert.equal(toPiModel({ id: "openai/gpt-4o-mini", supported_endpoint_types: ["openai"] }).api, "openai-completions");
+	});
+
+	it("keeps legacy max_tokens for non-OpenAI vendors", () => {
+		const glm = toPiModel({ id: "z-ai/glm-5.3", supported_endpoint_types: ["openai"] });
+		assert.equal(glm.compat.maxTokensField, "max_tokens");
+	});
+
 	it("marks a vision reasoning model as both", () => {
 		// NB: the live catalogue id is bare (no `qwen/` prefix).
 		const model = toPiModel({ id: "qwen3.5-omni-plus", supported_endpoint_types: ["openai"] });
