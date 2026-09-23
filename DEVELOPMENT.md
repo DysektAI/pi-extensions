@@ -20,6 +20,33 @@ pi list
 Local path packages are referenced from settings without copying files, so edits
 here apply on next Pi start or `/reload` (for auto-discovered package paths).
 
+## Never edit the installed git clone
+
+`pi install git:github.com/<owner>/<repo>` checks the package out to
+`~/.pi/agent/git/github.com/<owner>/<repo>` — a **managed mirror** that
+`pi update` fast-forwards to `origin/main`. It is not a workspace:
+
+- a commit made there never reaches your checkout, and a later fetch/reset
+  can discard it;
+- uncommitted edits there never reach your checkout at all — Pi keeps running
+  the last pushed code while your local copy looks "fixed".
+
+Both failure modes shipped the same bug: MiMo V2.6 (a 1M-token model) showed a
+128k context window because the fix sat uncommitted in one checkout and
+`origin/main` still had a commit made in the other. Work only in your own clone
+and finish the loop:
+
+```bash
+npm test && git status                      # green tests, clean tree
+git push origin main                        # CI runs on main
+pi update                                   # refresh the installed clone
+git -C ~/.pi/agent/git/github.com/DysektAI/pi-extensions status  # clean
+```
+
+Definition of done — in **both** your clone and the installed clone: no
+stashes, no uncommitted/untracked files, `main` equal to `origin/main`.
+An uncommitted fix is an unfixed bug.
+
 ## Avoid duplicate loading
 
 If the same extension exists as:
@@ -67,4 +94,6 @@ entry (env var as fallback), no network call when unconfigured, and
 
 Bump `package.json` version, tag `vX.Y.Z`, and pin installs with `@vX.Y.Z`.
 Pinned git refs are not moved by `pi update --extensions`; reinstall with the
-new ref to upgrade intentionally.
+new ref to upgrade intentionally. Put the version bump in the commit the tag
+points at, tag only when CI is green on `main`, and push the tag
+(`git tag -a vX.Y.Z -m "vX.Y.Z: …" && git push origin vX.Y.Z`).

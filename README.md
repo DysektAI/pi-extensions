@@ -169,6 +169,12 @@ cp extensions/credential-pool/pools.example.json \
 2. Do not treat `~/.pi/agent/extensions` loose copies as the source of truth for
    these public extensions — they will drift.
 3. Keep package defaults generic (no private provider names in fallbacks).
+4. Never edit or commit inside the installed git clone
+   (`~/.pi/agent/git/github.com/...`): it is a managed mirror that `pi update`
+   fast-forwards to `origin/main`, so local commits there are lost and
+   uncommitted edits there never reach Pi. Commit + push from your own clone,
+   then `pi update`. Definition of done: no stashes, clean trees, `main` equal
+   to `origin/main` in both checkouts (see DEVELOPMENT.md).
 
 ## License
 
