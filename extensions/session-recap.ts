@@ -19,7 +19,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Box } from "@earendil-works/pi-tui";
 import { registerConfigSetting } from "./_shared/config-settings.ts";
-import { resolveRoleCandidates } from "./_shared/model-roles.ts";
+import { resolveRoleCandidates, roleThinkingOption } from "./_shared/model-roles.ts";
 
 const RECAP_TIMEOUT_MS = 10_000;
 const MAX_RECAP_TOKENS = 80;
@@ -170,6 +170,7 @@ export default function (pi: ExtensionAPI) {
 											headers: (auth as any).headers,
 											maxTokens: MAX_RECAP_TOKENS,
 											signal: AbortSignal.timeout(RECAP_TIMEOUT_MS),
+											...roleThinkingOption("recap"),
 										},
 									);
 

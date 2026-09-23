@@ -67,7 +67,7 @@ import type {
   ExtensionContext,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { resolveRoleCandidates } from "../_shared/model-roles.ts";
+import { resolveRoleCandidates, roleThinkingOption } from "../_shared/model-roles.ts";
 import {
   type GoalConfig,
   type GoalState,
@@ -573,6 +573,7 @@ async function callJudge(
         headers: auth.headers,
         maxTokens: 800,
         signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+        ...roleThinkingOption("judge"),
       },
     );
 

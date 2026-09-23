@@ -138,7 +138,72 @@ function readRolesFile(): RolesFile {
 	}
 }
 
-/** Parse a "provider/id" string into a ModelRef. Returns undefined for "auto"/empty/malformed. */
+/** Valid thinking/reasoning levels for a `:level` role suffix (same vocabulary as pi CLI --model/--thinking). */
+export const ROLE_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type RoleThinking = (typeof ROLE_THINKING_LEVELS)[number];
+
+/** A parsed role value: model identity plus an optional thinking-level override. */
+export interface RoleRef extends ModelRef {
+	thinking?: RoleThinking;
+}
+
+export function isRoleThinking(value: string | undefined): value is RoleThinking {
+	return !!value && (ROLE_THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * Parse a role value ("provider/id" or "provider/id:level") into a RoleRef.
+ * The `:level` suffix is only split off when it is a valid thinking level —
+ * model ids that legitimately contain colons (e.g. openrouter "...:free")
+ * are left intact. Returns undefined for "auto"/empty/malformed.
+ */
+export function parseRoleKey(value: string | undefined): RoleRef | undefined {
+	const base = parseModelKey(value);
+	if (!base) return undefined;
+	const colon = base.id.lastIndexOf(":");
+	if (colon > 0) {
+		const suffix = base.id.slice(colon + 1);
+		if (isRoleThinking(suffix)) {
+			return { provider: base.provider, id: base.id.slice(0, colon), thinking: suffix };
+		}
+	}
+	return base;
+}
+
+/** Format a RoleRef back to its stored string form. */
+export function formatRoleKey(ref: RoleRef): string {
+	return ref.thinking ? `${ref.provider}/${ref.id}:${ref.thinking}` : `${ref.provider}/${ref.id}`;
+}
+
+/** Menu display for a role: "auto", or "provider/id (level|default)". */
+export function getRoleDisplay(role: ModelRole): string {
+	const ref = parseRoleKey(getRoleValue(role));
+	if (!ref) return AUTO;
+	return `${formatModelKey(ref)} (${ref.thinking ?? "default"})`;
+}
+
+/** The configured thinking level for a role (undefined = model default). */
+export function resolveRoleThinking(role: ModelRole): RoleThinking | undefined {
+	return parseRoleKey(getRoleValue(role))?.thinking;
+}
+
+/**
+ * Request options applying a role's thinking level to pi-ai complete/stream
+ * calls (OpenAI-family providers honor `reasoningEffort`). Returns {} when
+ * the role has no level set or is "off" — omission means provider default.
+ */
+export function roleThinkingOption(role: ModelRole): { reasoningEffort: RoleThinking } | Record<string, never> {
+	const thinking = resolveRoleThinking(role);
+	if (!thinking || thinking === "off") return {};
+	return { reasoningEffort: thinking };
+}
+
+/**
+ * Parse a "provider/id" string into a ModelRef. Returns undefined for "auto"/empty/malformed.
+ * NOTE: role values may carry a `:level` thinking suffix — use parseRoleKey
+ * for those; this intentionally keeps any suffix inside `id`.
+ */
 export function parseModelKey(value: string | undefined): ModelRef | undefined {
 	if (!value) return undefined;
 	const trimmed = value.trim();
@@ -160,14 +225,35 @@ export function getRoleValue(role: ModelRole): string {
 }
 
 /**
- * Resolve the ordered list of candidate ModelRefs for a role: the configured
- * model first (if any), then the role's defaults. Callers append ctx.model as
- * the guaranteed-authed final backstop and de-duplicate.
+ * Set a role's model identity, preserving any configured thinking level.
+ * Use pick-then-thinking flow in UI callers to revalidate the level.
+ */
+export function setRoleModel(role: ModelRole, provider: string, id: string): void {
+	const prev = parseRoleKey(getRoleValue(role));
+	setRoleValue(role, prev?.thinking ? `${provider}/${id}:${prev.thinking}` : `${provider}/${id}`);
+}
+
+/**
+ * Set (or clear with undefined) a role's thinking level. No-op when the role
+ * has no model set — there is nothing to attach the level to.
+ */
+export function setRoleThinking(role: ModelRole, thinking: RoleThinking | undefined): void {
+	const ref = parseRoleKey(getRoleValue(role));
+	if (!ref) return;
+	setRoleValue(role, thinking ? `${formatModelKey(ref)}:${thinking}` : formatModelKey(ref));
+}
+/**
+ * Ordered candidate ModelRefs for a role: the configured model first (if any),
+ * then the role's defaults. Callers append ctx.model as the
+ * guaranteed-authed final backstop and de-duplicate.
  */
 export function resolveRoleCandidates(role: ModelRole): ModelRef[] {
 	const spec = ROLE_SPECS.find((s) => s.role === role);
 	const defaults = spec ? spec.defaults : [];
-	const configured = parseModelKey(getRoleValue(role));
+	// Strip any `:level` thinking suffix — candidates are model identity only;
+	// the level travels separately via resolveRoleThinking.
+	const parsed = parseRoleKey(getRoleValue(role));
+	const configured = parsed ? { provider: parsed.provider, id: parsed.id } : undefined;
 	if (!configured) return [...defaults];
 	// Configured model wins; keep defaults as additional fallbacks.
 	const out = [configured];
@@ -177,7 +263,7 @@ export function resolveRoleCandidates(role: ModelRole): ModelRef[] {
 	return out;
 }
 
-/** Persist a role's value. Pass "auto" (or undefined) to clear it back to defaults. */
+/** Persist a role's value. Pass "auto" (or undefined) to clear it back to defaults. Clearing also drops any `:level` thinking suffix (it lives in the same string). */
 export function setRoleValue(role: ModelRole, value: string | undefined): void {
 	const path = rolesConfigPath();
 	const current = readRolesFile();
@@ -293,15 +379,20 @@ export function resolveSubagentChain(): string[] {
 	const spec = ROLE_SPECS.find((s) => s.role === "subagent");
 	const defaults = (spec?.defaults ?? []).map(formatModelKey);
 	const chain: string[] = [];
+	const seenBase = new Set<string>();
+	// Push a full role key ("provider/id" or "provider/id:level"); de-dupe by
+	// model identity so the same model never appears twice at different efforts.
 	const pushKey = (key: string | undefined) => {
-		if (key && !chain.includes(key)) chain.push(key);
+		const ref = parseRoleKey(key);
+		if (!ref) return;
+		const base = formatModelKey(ref);
+		if (seenBase.has(base)) return;
+		seenBase.add(base);
+		chain.push(formatRoleKey(ref));
 	};
-	const configured = parseModelKey(getRoleValue("subagent"));
-	pushKey(configured ? formatModelKey(configured) : defaults[0]);
-	for (const fb of SUBAGENT_FALLBACK_ROLES) {
-		const ref = parseModelKey(getRoleValue(fb));
-		if (ref) pushKey(formatModelKey(ref));
-	}
+	const configured = getRoleValue("subagent");
+	pushKey(parseRoleKey(configured) ? configured : defaults[0]);
+	for (const fb of SUBAGENT_FALLBACK_ROLES) pushKey(getRoleValue(fb));
 	for (const d of defaults) pushKey(d);
 	return chain;
 }

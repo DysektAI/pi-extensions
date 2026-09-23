@@ -28,7 +28,7 @@
 import { complete } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { resolveRoleCandidates } from "./_shared/model-roles.ts";
+import { resolveRoleCandidates, roleThinkingOption } from "./_shared/model-roles.ts";
 
 // Title helper models come from the central "title" role (configure via /config).
 // ctx.model is added last as a guaranteed-authed backstop.
@@ -192,6 +192,7 @@ async function generateTitle(ctx: any, messages: any[]): Promise<string> {
 					headers: (auth as any).headers,
 					maxTokens: MAX_TITLE_TOKENS,
 					signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+					...roleThinkingOption("title"),
 				},
 			);
 

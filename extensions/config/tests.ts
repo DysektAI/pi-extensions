@@ -21,7 +21,6 @@ import { join } from "node:path";
 
 import configExtension, { applyRoleValue, roleModelRuntime } from "./index.ts";
 import { getRoleValue, ROLE_SPECS, setRoleValue } from "../_shared/model-roles.ts";
-
 // The TUI picker test constructs core's real ModelSelectorComponent, which
 // needs @earendil-works/pi-coding-agent resolvable (at pi runtime it always
 // is; for tests, symlink pi-fork's workspace into node_modules — gitignored).
@@ -200,16 +199,22 @@ describe("non-TUI role picker", () => {
 			},
 			select: async (title: string, options: string[]) => {
 				selectCalls.push([title, options]);
-				assert.ok(options[0]?.startsWith("Auto"));
-				assert.ok(options.some((o) => o.includes("mimo-v2.6-flash-free")));
-				return options.find((o) => o.includes("mimo-v2.6-flash-free"));
+				if (selectCalls.length === 1) {
+					// Model step.
+					assert.ok(options[0]?.startsWith("Auto"));
+					assert.ok(options.some((o) => o.includes("mimo-v2.6-flash-free")));
+					return options.find((o) => o.includes("mimo-v2.6-flash-free"));
+				}
+				// Thinking step: keep whatever the model step preserved.
+				assert.ok(options.some((o) => o.includes("Model default")));
+				return undefined;
 			},
 			custom: async () => {
 				throw new Error("custom must not be used outside the TUI");
 			},
 		};
 		await handler("title", ctx);
-		assert.equal(selectCalls.length, 1);
+		assert.equal(selectCalls.length, 2); // model step, then thinking step
 		assert.equal(customCalls.length, 0);
 		assert.equal(getRoleValue("title"), picked);
 	});
@@ -222,7 +227,8 @@ describe("applyRoleValue", () => {
 		// Sync targets <agentDir>/agents — build it inside the tmp dir.
 		mkdirSync(join(agentDir, "agents"), { recursive: true });
 		writeFileSync(join(agentDir, "agents", "t.md"), "---\nname: t\ndescription: d\n---\nbody\n");
-		applyRoleValue(spec, "opencode/mimo-v2.6-flash-free", ctx);
+		setRoleValue("subagent", "opencode/mimo-v2.6-flash-free");
+		applyRoleValue(spec, ctx);
 		assert.equal(getRoleValue("subagent"), "opencode/mimo-v2.6-flash-free");
 		assert.ok(notifications.some((n) => n.includes("subagent chain")));
 	});
