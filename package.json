@@ -1,8 +1,13 @@
 {
   "name": "@dysektai/pi-extensions",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Public-safe Pi coding-agent extensions (config menu, tasks, search, LSP, goal loop, UX helpers, and more).",
-  "keywords": ["pi-package", "pi", "coding-agent", "extensions"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "extensions"
+  ],
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -24,8 +29,12 @@
     "tsx": "^4.23.12"
   },
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "files": [
     "extensions/",
