@@ -17,7 +17,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts",
+    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts",
     "verify": "npm test"
   },
   "devDependencies": {
