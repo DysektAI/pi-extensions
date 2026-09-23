@@ -19,6 +19,9 @@
  * The "verified" ids below were probed on 2026-09-21 against
  * https://api.tokenrouter.com/v1/chat/completions with `reasoning_effort:
  * "high"`; positives returned a separate reasoning field, negatives did not.
+ * (The xiaomi/mimo-v2.6-* ids were re-verified on 2026-09-23: all three
+ * variants return a separate `reasoning` field, and the upstream accepts the
+ * full effort enum none|minimal|low|medium|high|xhigh|max.)
  *
  * Run with:
  *   npx tsx --test extensions/tokenrouter/tests.ts
@@ -76,6 +79,8 @@ const VERIFIED_REASONING = [
 	"seed-2-0-mini-260428",
 	"tencent/hy4-preview",
 	"xiaomi/mimo-v2.5-pro",
+	"xiaomi/mimo-v2.6-flash",
+	"xiaomi/mimo-v2.6-pro-ultraspeed",
 ];
 
 // Ids verified to expose NO separate reasoning field (or otherwise unusable).

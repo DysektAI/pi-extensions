@@ -15,8 +15,9 @@
  * Every family in the heuristic list was verified on 2026-09-21 against
  * https://api.tokenrouter.com/v1/chat/completions to return a real, separate
  * reasoning field (reasoning_content / reasoning / reasoning_text) when sent
- * `reasoning_effort: "high"`. Ids that match a heuristic but do NOT return such
- * a field are forced off in REASONING_OVERRIDES. There is deliberately no
+ * `reasoning_effort: "high"` (xiaomi/mimo-v2.6 re-verified 2026-09-23). Ids
+ * that match a heuristic but do NOT return such a field are forced off in
+ * REASONING_OVERRIDES. There is deliberately no
  * runtime probing: the extension load path already blocks on one catalogue
  * fetch, and listed ids are not guaranteed to be servable.
  */
@@ -119,8 +120,9 @@ export const REASONING_HEURISTICS: string[] = [
 	"seed-2-0",
 	// Tencent Hunyuan preview models.
 	"tencent/hy",
-	// Xiaomi MiMo v2.5 (the deprecated mimo-v2-* ids are excluded).
+	// Xiaomi MiMo v2.5/v2.6 (the deprecated mimo-v2-* ids are excluded).
 	"xiaomi/mimo-v2.5",
+	"xiaomi/mimo-v2.6",
 ];
 
 /**
