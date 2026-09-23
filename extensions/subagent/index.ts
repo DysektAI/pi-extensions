@@ -22,6 +22,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { resolveSubagentChain } from "../_shared/model-roles.ts";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -305,7 +306,6 @@ async function runSingleAgent(
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
-	modelOverride: string | undefined,
 	cwd: string | undefined,
 	step: number | undefined,
 	signal: AbortSignal | undefined,
@@ -328,9 +328,12 @@ async function runSingleAgent(
 		};
 	}
 
-	const primaryModel = modelOverride || agent?.model;
-	const fallbackModels = agent?.fallbackModels || [];
-	const modelsToTry = primaryModel ? [primaryModel, ...fallbackModels] : [undefined, ...fallbackModels];
+	// /config (model-roles.json: Subagent model + fallbacks 1..3, with :thinking
+	// suffixes) is the single source of truth. Agent frontmatter `model:` /
+	// `fallbackModels:` and per-call overrides are deliberately ignored, so no
+	// agent definition or tool call can route a child to a different model.
+	const modelsToTry: string[] = resolveSubagentChain();
+	const primaryModel = modelsToTry[0];
 
 	let lastResult: SingleResult | null = null;
 
@@ -498,14 +501,12 @@ async function runSingleAgent(
 const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
-	model: Type.Optional(Type.String({ description: "Model override for this parallel task. If omitted, uses the agent default." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
-	model: Type.Optional(Type.String({ description: "Model override for this chain step. If omitted, uses the agent default." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
@@ -517,7 +518,6 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-	model: Type.Optional(Type.String({ description: "Model override for single mode (e.g. amazon-bedrock/global.anthropic.claude-opus-4-6-v1). Uses agent default if omitted." })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	agentScope: Type.Optional(AgentScopeSchema),
@@ -534,21 +534,19 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			"Override the model per task with the model parameter (e.g. amazon-bedrock/global.anthropic.claude-opus-4-6-v1).",
-			'Agent defaults: scout=fast/cheap, plan=deep/reasoning (opus with fallbacks), implement=balanced, review=balanced, deep-review=deep/opus.',
+			"All subagents run on the model + fallbacks + reasoning level configured in /config; the model cannot be chosen per call.",
 			'Default agent scope is "user" (from ~/.pi/agent/agents).',
 			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
 		].join(" "),
-		promptSnippet: "Delegate tasks to isolated subagents with per-task model override",
+		promptSnippet: "Delegate tasks to isolated subagents (model set via /config)",
 		promptGuidelines: [
-			"Use subagent when a task benefits from an isolated context window or a different model.",
+			"Use subagent when a task benefits from an isolated context window.",
 			"For simple reconnaissance (find files, grep patterns), use the scout agent.",
-			"For architecture decisions or complex planning, use the plan agent. It defaults to opus with automatic fallbacks — no need for a separate opus-planner.",
-			"For implementation work, use the implement agent. Override with a coding-strong or opus model if the task is architecture-heavy or the user asks for it.",
-			"For code review, use the review agent. It defaults to a fast cheap model for routine reviews; override with opus for security-critical or architecturally complex changes.",
+			"For architecture decisions or complex planning, use the plan agent.",
+			"For implementation work, use the implement agent.",
+			"For code review, use the review agent.",
 			"Use parallel mode for independent tasks that can run simultaneously.",
 			"Use chain mode when one agent's output is needed as input to the next.",
-			"Override model when the default agent model is not well-suited to the task (e.g. use opus for deep reasoning, use a fast model for simple lookups).",
 		],
 		parameters: SubagentParams,
 
@@ -638,7 +636,6 @@ export default function (pi: ExtensionAPI) {
 						agents,
 						step.agent,
 						taskWithContext,
-						step.model,
 						step.cwd,
 						i + 1,
 						signal,
@@ -713,7 +710,6 @@ export default function (pi: ExtensionAPI) {
 						agents,
 						t.agent,
 						t.task,
-						t.model,
 						t.cwd,
 						undefined,
 						signal,
@@ -749,7 +745,6 @@ export default function (pi: ExtensionAPI) {
 					agents,
 					params.agent,
 					params.task,
-					params.model,
 					params.cwd,
 					undefined,
 					signal,

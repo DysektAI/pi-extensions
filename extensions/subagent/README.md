@@ -10,11 +10,17 @@ Each file is a Markdown document with YAML frontmatter. The Markdown body after 
 |-----|------|---------|-------------|
 | `name` | string | required | Short identifier used in `/subagent <name> <task>` |
 | `description` | string | required | One-line summary shown in the agent list |
-| `model` | string | Pi default | Model to run the child with |
-| `fallbackModels` | string | - | Comma-separated list of fallback models |
 | `tools` | string | - | Comma-separated list of tools |
 | `systemPromptMode` | `"append"` \| `"replace"` | `"append"` | Whether to append the custom prompt to Pi's default prompt or replace it entirely |
 | `inheritSkills` | boolean | `true` | Whether the child inherits the parent's skill catalog |
+
+## Model selection
+
+Every subagent runs on the chain configured in `/config` ("Subagent model" +
+"Subagent fallback 1..3", including each entry's reasoning level), read from
+`~/.pi/agent/model-roles.json` at call time. Frontmatter `model:` /
+`fallbackModels:` keys and per-call overrides are ignored; the tool exposes no
+`model` parameter.
 
 ## Example
 
@@ -22,7 +28,6 @@ Each file is a Markdown document with YAML frontmatter. The Markdown body after 
 ---
 name: scout
 description: Quick codebase scout
-model: claude-sonnet-4-20250514
 tools: read, bash
 systemPromptMode: replace
 inheritSkills: false
