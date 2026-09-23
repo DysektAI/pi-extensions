@@ -4,7 +4,12 @@
  * Owns:
  *   /config                 open menu (registered extension settings + model roles)
  *   /config <setting>       show or set a registered setting (e.g. recaps on|off)
- *   /config <role>          jump to a model-role picker (recap, title, judge, subagent)
+ *   /config <role>          jump to a model-role picker (recap, title, judge,
+ *                           subagent, subagentfallback1..3)
+ *
+ * Subagent roles are special: after picking one, the resolved chain
+ * (primary + ordered fallbacks) is immediately written into
+ * ~/.pi/agent/agents/*.md so core subagents use it — see subagent-models.
  *
  * Extension authors register settings via `_shared/config-settings.ts` so this
  * menu stays the single place for user-facing configuration.
@@ -18,6 +23,7 @@ import {
 	type ConfigSetting,
 } from "./_shared/config-settings.ts";
 import {
+	applySubagentChainToAgents,
 	getRoleValue,
 	ROLE_SPECS,
 	scopeModels,
@@ -57,7 +63,12 @@ export default function (pi: ExtensionAPI) {
 		const index = options.indexOf(choice);
 		if (index < 0) return;
 		setRoleValue(spec.role, keys[index]);
-		ctx.ui.notify(`${spec.label} set to ${keys[index] ?? "auto"}`, "info");
+		let suffix = "";
+		if (spec.role === "subagent" || spec.role.startsWith("subagentFallback")) {
+			const { updated, chain } = applySubagentChainToAgents();
+			suffix = ` — subagent chain now ${chain.join(" → ")} (applied to ${updated.length} agent${updated.length === 1 ? "" : "s"})`;
+		}
+		ctx.ui.notify(`${spec.label} set to ${keys[index] ?? "auto"}${suffix}`, "info");
 	}
 
 	async function openConfigMenu(ctx: any): Promise<void> {
@@ -137,8 +148,8 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Model role shortcut: /config recap|title|judge|subagent
-			const roleIndex = ROLE_SPECS.findIndex((s) => s.role === key);
+			// Model role shortcut: /config recap|title|judge|subagent|subagentfallback1..3
+			const roleIndex = ROLE_SPECS.findIndex((s) => s.role.toLowerCase() === key);
 			if (roleIndex >= 0) {
 				if (ctx.hasUI) {
 					await pickModelForRole(roleIndex, ctx);
