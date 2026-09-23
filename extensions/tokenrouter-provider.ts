@@ -1,10 +1,16 @@
 /**
  * TokenRouter Provider Extension for Pi
  *
- * Registers https://api.tokenrouter.com/v1 as an OpenAI-compatible provider
+ * Registers https://api.tokenrouter.com/v1 as a multi-API provider
  * with dynamically fetched models. TokenRouter is an intelligent LLM routing
  * platform that routes requests across OpenAI, Anthropic, Google, DeepSeek,
  * Qwen, Moonshot, Z-AI, MiniMax, xAI, and more.
+ *
+ * Most models speak the OpenAI wire API, but Claude ids served only via
+ * TokenRouter's Anthropic endpoint are registered as `anthropic-messages`
+ * (see `isAnthropicOnlyModel` in ./tokenrouter/pure.ts): sending them OpenAI
+ * `reasoning_effort` makes TokenRouter emit legacy `thinking.enabled`, which
+ * current Claude generations reject.
  *
  * Auth resolution order:
  * 1. `tokenrouter` entry in ~/.pi/agent/auth.json (persistent, no env var needed)
@@ -29,7 +35,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 
-import { extractModels, isChatModel, type TokenRouterModel, toPiModel } from "./tokenrouter/pure.ts";
+import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from "./tokenrouter/pure.ts";
 
 const BASE_URL = "https://api.tokenrouter.com/v1";
 const FETCH_TIMEOUT_MS = 10000;
@@ -65,8 +71,8 @@ async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {
 		const hint = response.status === 401 ? "; update the tokenrouter entry in ~/.pi/agent/auth.json" : "";
 		throw new Error(`HTTP ${response.status}${hint}`);
 	}
-	const models = extractModels(await response.json()).filter(isChatModel);
-	if (models.length === 0) throw new Error("no chat models returned for this key");
+	const models = extractModels(await response.json()).filter(isServableModel);
+	if (models.length === 0) throw new Error("no servable models returned for this key");
 	return models;
 }
 
@@ -84,7 +90,7 @@ async function writeCache(models: TokenRouterModel[]): Promise<void> {
 async function loadCache(): Promise<TokenRouterModel[]> {
 	try {
 		const content = await readFile(cachePath(), "utf8");
-		return extractModels(JSON.parse(content)).filter(isChatModel);
+		return extractModels(JSON.parse(content)).filter(isServableModel);
 	} catch {
 		return [];
 	}

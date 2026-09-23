@@ -41,13 +41,44 @@ export interface TokenRouterModel {
 // ── Catalogue parsing ───────────────────────────────────────────────────────
 
 /**
- * Models that speak the OpenAI chat-completions wire API. Everything else
- * (gemini-native, anthropic-native, image/video/embeddings/audio endpoints) is
- * not usable through pi's openai-completions driver and is skipped.
+ * Models that speak the OpenAI chat-completions wire API. Everything except
+ * Anthropic-native ids (see `isAnthropicOnlyModel`) that lacks this endpoint —
+ * gemini-native, image/video/embeddings/audio endpoints — is not usable
+ * through pi's drivers and is skipped.
  */
 export function isChatModel(model: TokenRouterModel): boolean {
 	const endpoints = model.supported_endpoint_types ?? [];
 	return endpoints.includes("openai");
+}
+
+/**
+ * Models served ONLY via TokenRouter's Anthropic endpoint (`POST /v1/messages`).
+ *
+ * Registering these as `openai-completions` makes pi send OpenAI
+ * `reasoning_effort`, which TokenRouter translates to Anthropic
+ * `thinking: { type: "enabled" }` — and Claude Opus 4.7+ / 5.x / Fable 5 /
+ * Sonnet 5 reject that with 400 `"thinking.enabled" is not supported for this
+ * model. Use "thinking.adaptive" and "output_config.effort"`. Verified live
+ * 2026-09-23: `reasoning_effort` on `/v1/chat/completions` for
+ * `anthropic/claude-opus-5.5` returns that exact 400, while
+ * `thinking: { type: "adaptive" }` + `output_config.effort` on `/v1/messages`
+ * succeeds.
+ *
+ * Ids offering both `anthropic` and `openai` (e.g. the `*-huo` aliases,
+ * `x-ai/grok-4.5`) keep the OpenAI registration — that path works.
+ */
+export function isAnthropicOnlyModel(model: TokenRouterModel): boolean {
+	const endpoints = model.supported_endpoint_types ?? [];
+	return (
+		endpoints.includes("anthropic") &&
+		!endpoints.includes("openai") &&
+		!endpoints.includes("openai-response")
+	);
+}
+
+/** Every catalogue entry pi can serve: OpenAI chat models plus Anthropic-only ones. */
+export function isServableModel(model: TokenRouterModel): boolean {
+	return isChatModel(model) || isAnthropicOnlyModel(model);
 }
 
 /** Accepts the `{ data: [...] }` envelope, a bare array, or anything else. */
@@ -297,6 +328,32 @@ export function getModelApi(id: string): "openai-completions" | "openai-response
 	return RESPONSES_API_PATTERN.test(id.toLowerCase()) ? "openai-responses" : "openai-completions";
 }
 
+/**
+ * Base URL for TokenRouter's Anthropic Messages endpoint (`POST /v1/messages`,
+ * live-verified 2026-09-23). pi's anthropic-messages driver appends
+ * `/v1/messages` to the model base URL itself (same convention as OpenRouter's
+ * `https://openrouter.ai/api`), so the `/v1` suffix of the OpenAI base URL is
+ * already stripped here.
+ */
+export const TOKENROUTER_ANTHROPIC_BASE_URL = "https://api.tokenrouter.com";
+
+/**
+ * Claude generations with adaptive thinking (mirrors pi's built-in catalog:
+ * Opus 4.6+, Sonnet 4.6/5, Fable/Mythos 5). Only these set
+ * `forceAdaptiveThinking`, so an older Anthropic-only id would keep the
+ * budget-based thinking path its upstream still accepts.
+ */
+export function isAdaptiveThinkingModel(id: string): boolean {
+	return /opus-4-[678]|opus-4\.[678]|opus-5|opus\.5|sonnet-4-6|sonnet-4\.6|sonnet-5|sonnet\.5|fable-5|mythos-5/i.test(
+		id,
+	);
+}
+
+/** Matches pi's built-in catalog: temperature is unsupported on Opus 4.7+/5.x. */
+function isAnthropicTemperatureUnsupportedModel(id: string): boolean {
+	return /opus-4-[78]|opus-4\.[78]|opus-5|opus\.5/i.test(id);
+}
+
 // ── Thinking levels ─────────────────────────────────────────────────────────
 
 /**
@@ -388,9 +445,40 @@ export function getThinkingLevelMap(id: string): Record<string, string | null> |
 	return undefined;
 }
 
+/**
+ * Descriptor for Anthropic-only catalogue ids: native Anthropic Messages wire
+ * format with adaptive thinking where the generation requires it, so pi never
+ * sends the legacy `thinking.enabled` shape these upstreams reject (see
+ * `isAnthropicOnlyModel`). Context/output/image metadata reuse the same
+ * heuristic tables as the OpenAI path.
+ */
+function toAnthropicPiModel(model: TokenRouterModel) {
+	const id = model.id;
+	return {
+		id,
+		api: "anthropic-messages" as const,
+		baseUrl: TOKENROUTER_ANTHROPIC_BASE_URL,
+		name: `${titleize(id)} (TokenRouter)`,
+		reasoning: isReasoningModel(id),
+		input: supportsImages(id) ? (["text", "image"] as const) : (["text"] as const),
+		contextWindow: getContextWindow(id),
+		maxTokens: getMaxTokens(id),
+		thinkingLevelMap: getThinkingLevelMap(id),
+		// The catalog doesn't expose pricing; 0 avoids fake cost math.
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		compat: {
+			// Tells pi's anthropic-messages driver to send
+			// `thinking: { type: "adaptive" }` + `output_config.effort`.
+			...(isAdaptiveThinkingModel(id) ? { forceAdaptiveThinking: true } : {}),
+			...(isAnthropicTemperatureUnsupportedModel(id) ? { supportsTemperature: false } : {}),
+		},
+	};
+}
+
 // ── pi model descriptor ─────────────────────────────────────────────────────
 
 export function toPiModel(model: TokenRouterModel) {
+	if (isAnthropicOnlyModel(model)) return toAnthropicPiModel(model);
 	const id = model.id;
 	const isMiMoV2Model = /mimo-v2\.(?:5|6)/i.test(id);
 	return {

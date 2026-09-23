@@ -37,12 +37,16 @@ import {
 	IMAGE_PATTERNS,
 	REASONING_HEURISTICS,
 	REASONING_OVERRIDES,
+	TOKENROUTER_ANTHROPIC_BASE_URL,
 	extractModels,
 	getContextWindow,
 	getMaxTokens,
 	getThinkingLevelMap,
+	isAdaptiveThinkingModel,
+	isAnthropicOnlyModel,
 	isChatModel,
 	isReasoningModel,
+	isServableModel,
 	supportsImages,
 	titleize,
 	toPiModel,
@@ -111,6 +115,62 @@ describe("isChatModel", () => {
 		assert.equal(isChatModel({ id: "x", supported_endpoint_types: ["video-generation", "video-fetch"] }), false);
 		assert.equal(isChatModel({ id: "x", supported_endpoint_types: [] }), false);
 		assert.equal(isChatModel({ id: "x" }), false);
+	});
+});
+
+describe("isAnthropicOnlyModel", () => {
+	it("matches ids served only via the Anthropic endpoint", () => {
+		assert.equal(isAnthropicOnlyModel({ id: "anthropic/claude-opus-5.5", supported_endpoint_types: ["anthropic"] }), true);
+		assert.equal(isAnthropicOnlyModel({ id: "anthropic/claude-fable-5.1", supported_endpoint_types: ["anthropic"] }), true);
+	});
+
+	it("rejects dual-endpoint, OpenAI-only and Anthropic-compatible ids", () => {
+		// Dual-endpoint aliases keep the working OpenAI registration.
+		assert.equal(
+			isAnthropicOnlyModel({ id: "anthropic/claude-opus-5-huo", supported_endpoint_types: ["anthropic", "openai"] }),
+			false,
+		);
+		assert.equal(isAnthropicOnlyModel({ id: "x", supported_endpoint_types: ["openai"] }), false);
+		assert.equal(isAnthropicOnlyModel({ id: "x", supported_endpoint_types: ["openai-response"] }), false);
+		assert.equal(isAnthropicOnlyModel({ id: "x", supported_endpoint_types: ["anthropic-compatible"] }), false);
+		assert.equal(isAnthropicOnlyModel({ id: "x", supported_endpoint_types: ["anthropic", "openai-response"] }), false);
+		assert.equal(isAnthropicOnlyModel({ id: "x" }), false);
+	});
+});
+
+describe("isServableModel", () => {
+	it("keeps OpenAI chat models and Anthropic-only models", () => {
+		assert.equal(isServableModel({ id: "x", supported_endpoint_types: ["openai"] }), true);
+		assert.equal(isServableModel({ id: "x", supported_endpoint_types: ["anthropic"] }), true);
+	});
+
+	it("still rejects unusable endpoints", () => {
+		assert.equal(isServableModel({ id: "x", supported_endpoint_types: ["gemini"] }), false);
+		assert.equal(isServableModel({ id: "x", supported_endpoint_types: ["anthropic-compatible"] }), false);
+		assert.equal(isServableModel({ id: "x", supported_endpoint_types: ["image-generation"] }), false);
+		assert.equal(isServableModel({ id: "x" }), false);
+	});
+});
+
+describe("isAdaptiveThinkingModel", () => {
+	it("matches adaptive-thinking Claude generations", () => {
+		for (const id of [
+			"anthropic/claude-opus-5.5",
+			"anthropic/claude-opus-5",
+			"anthropic/claude-opus-4.8",
+			"anthropic/claude-opus-4.7-fast",
+			"anthropic/claude-fable-5.1",
+			"anthropic/claude-sonnet-5",
+		]) {
+			assert.equal(isAdaptiveThinkingModel(id), true, id);
+		}
+	});
+
+	it("rejects older Claude and non-Claude ids", () => {
+		assert.equal(isAdaptiveThinkingModel("anthropic/claude-opus-4.5"), false);
+		assert.equal(isAdaptiveThinkingModel("anthropic/claude-sonnet-4"), false);
+		assert.equal(isAdaptiveThinkingModel("openai/gpt-6-luna"), false);
+		assert.equal(isAdaptiveThinkingModel("deepseek/deepseek-v4-pro"), false);
 	});
 });
 
@@ -326,6 +386,32 @@ describe("toPiModel", () => {
 	it("keeps legacy max_tokens for non-OpenAI vendors", () => {
 		const glm = toPiModel({ id: "z-ai/glm-5.3", supported_endpoint_types: ["openai"] });
 		assert.equal(glm.compat.maxTokensField, "max_tokens");
+	});
+
+	it("registers Anthropic-only Claude on the native Anthropic API with adaptive thinking", () => {
+		// Regression test: pi used to send these OpenAI reasoning_effort, which
+		// TokenRouter translated to thinking.enabled — rejected with 400
+		// '"thinking.enabled" is not supported for this model' (live 2026-09-23).
+		const model = toPiModel({ id: "anthropic/claude-opus-5.5", supported_endpoint_types: ["anthropic"] });
+		assert.equal(model.api, "anthropic-messages");
+		assert.equal(model.baseUrl, TOKENROUTER_ANTHROPIC_BASE_URL);
+		assert.equal(model.reasoning, true);
+		assert.equal(model.compat.forceAdaptiveThinking, true);
+		assert.equal(model.compat.supportsTemperature, false);
+		assert.equal(model.thinkingLevelMap?.max, "max");
+		assert.ok(model.name.includes("TokenRouter"));
+	});
+
+	it("keeps dual-endpoint Claude aliases on the OpenAI API", () => {
+		const model = toPiModel({ id: "anthropic/claude-opus-5-huo", supported_endpoint_types: ["anthropic", "openai"] });
+		assert.equal(model.api, "openai-completions");
+		assert.equal(model.baseUrl, undefined);
+	});
+
+	it("wires a non-adaptive Anthropic-only id without forceAdaptiveThinking", () => {
+		const model = toPiModel({ id: "anthropic/claude-sonnet-4", supported_endpoint_types: ["anthropic"] });
+		assert.equal(model.api, "anthropic-messages");
+		assert.equal(model.compat.forceAdaptiveThinking, undefined);
 	});
 
 	it("wires MiMo V2.6 reasoning and Xiaomi-compatible thinking replay metadata", () => {
