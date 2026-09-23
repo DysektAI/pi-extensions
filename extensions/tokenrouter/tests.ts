@@ -81,6 +81,8 @@ const VERIFIED_REASONING = [
 	"xiaomi/mimo-v2.5-pro",
 	"xiaomi/mimo-v2.6-flash",
 	"xiaomi/mimo-v2.6-pro-ultraspeed",
+	// Bare upstream id form (catalogues without the `xiaomi/` vendor prefix).
+	"mimo-v2.6-pro",
 ];
 
 // Ids verified to expose NO separate reasoning field (or otherwise unusable).
@@ -180,6 +182,7 @@ describe("supportsImages", () => {
 		assert.equal(supportsImages("anthropic/claude-haiku-4-5"), true);
 		// V4.1 Flash is natively multimodal despite the text-only catalogue tag.
 		assert.equal(supportsImages("deepseek/deepseek-v4.1-flash"), true);
+		assert.equal(supportsImages("xiaomi/mimo-v2.6-pro"), true);
 	});
 
 	it("defaults to text-only", () => {
@@ -195,6 +198,11 @@ describe("getContextWindow", () => {
 		// V4.1 Flash advertises 1M; other DeepSeek variants keep the 128k default.
 		assert.equal(getContextWindow("deepseek/deepseek-v4.1-flash"), 1_000_000);
 		assert.equal(getContextWindow("deepseek/deepseek-v4-pro"), 128_000);
+		// Live-probed 2026-09-23: the gateway reports "maximum context length is
+		// 1048576 tokens" for mimo-v2.6 ids (the 128k default was the bug).
+		assert.equal(getContextWindow("xiaomi/mimo-v2.6-pro"), 1_048_576);
+		assert.equal(getContextWindow("xiaomi/mimo-v2.6-flash"), 1_048_576);
+		assert.equal(getContextWindow("xiaomi/mimo-v2.5-pro"), 1_048_576);
 		assert.equal(getContextWindow("totally/unknown-model"), DEFAULT_CONTEXT_WINDOW);
 	});
 });
@@ -204,6 +212,8 @@ describe("getMaxTokens", () => {
 		assert.equal(getMaxTokens("deepseek/deepseek-v4.1-flash"), 393_216);
 		assert.equal(getMaxTokens("deepseek/deepseek-v4-flash-vision-exp"), 393_216);
 		assert.equal(getMaxTokens("openai/gpt-oss-120b"), DEFAULT_MAX_OUTPUT_TOKENS);
+		assert.equal(getMaxTokens("xiaomi/mimo-v2.6-pro"), 131_072);
+		assert.equal(getMaxTokens("xiaomi/mimo-v2.5"), 131_072);
 	});
 });
 
@@ -241,6 +251,13 @@ describe("getThinkingLevelMap", () => {
 
 	it("returns undefined for families with no explicit map", () => {
 		assert.equal(getThinkingLevelMap("qwen/qwen3.5-9b"), undefined);
+	});
+
+	it("gives MiMo V2.5/V2.6 no map so the full effort enum passes through", () => {
+		// Live-verified 2026-09-23: the upstream accepts none..max and the value
+		// is a no-op, so — like pi's built-in Xiaomi catalog — no map is exposed.
+		assert.equal(getThinkingLevelMap("xiaomi/mimo-v2.6-pro"), undefined);
+		assert.equal(getThinkingLevelMap("xiaomi/mimo-v2.5"), undefined);
 	});
 });
 
@@ -294,6 +311,18 @@ describe("toPiModel", () => {
 	it("keeps legacy max_tokens for non-OpenAI vendors", () => {
 		const glm = toPiModel({ id: "z-ai/glm-5.3", supported_endpoint_types: ["openai"] });
 		assert.equal(glm.compat.maxTokensField, "max_tokens");
+	});
+
+	it("wires MiMo V2.6 reasoning and Xiaomi-compatible thinking replay metadata", () => {
+		const mimo = toPiModel({ id: "xiaomi/mimo-v2.6-pro", supported_endpoint_types: ["openai"] });
+		assert.equal(mimo.reasoning, true);
+		assert.deepEqual(mimo.input, ["text", "image"]);
+		assert.equal(mimo.contextWindow, 1_048_576);
+		assert.equal(mimo.maxTokens, 131_072);
+		assert.equal(mimo.compat.thinkingFormat, "deepseek");
+		assert.equal(mimo.compat.requiresReasoningContentOnAssistantMessages, true);
+		// No thinkingLevelMap: effort levels pass through as-is (see above).
+		assert.equal(mimo.thinkingLevelMap, undefined);
 	});
 
 	it("marks a vision reasoning model as both", () => {

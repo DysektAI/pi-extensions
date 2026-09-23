@@ -9,7 +9,7 @@
  * field is modality only (Text/Image/Video/Audio/Embedding). Reasoning support
  * is therefore inferred from the model id:
  *
- *   1. REASONING_HEURISTICS — broad, live-verified family prefixes (the default).
+ *   1. REASONING_HEURISTICS — family prefixes backed by API probes or vendor docs.
  *   2. REASONING_OVERRIDES   — explicit per-id exceptions in BOTH directions.
  *
  * Every family in the heuristic list was verified on 2026-09-21 against
@@ -17,9 +17,16 @@
  * reasoning field (reasoning_content / reasoning / reasoning_text) when sent
  * `reasoning_effort: "high"` (xiaomi/mimo-v2.6 re-verified 2026-09-23). Ids
  * that match a heuristic but do NOT return such a field are forced off in
- * REASONING_OVERRIDES. There is deliberately no
- * runtime probing: the extension load path already blocks on one catalogue
- * fetch, and listed ids are not guaranteed to be servable.
+ * REASONING_OVERRIDES.
+ *
+ * Context/output limits for MiMo V2.5/V2.6 come from Xiaomi's published API
+ * docs and pi's built-in Xiaomi/OpenRouter catalogs, and were re-probed live
+ * against TokenRouter on 2026-09-23 (an out-of-range max_tokens makes the
+ * gateway answer "maximum context length is 1048576 tokens"; max_tokens
+ * 131072 is accepted).
+ *
+ * There is deliberately no runtime probing: the extension load path already
+ * blocks on one catalogue fetch, and listed ids are not guaranteed to be servable.
  */
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -120,9 +127,13 @@ export const REASONING_HEURISTICS: string[] = [
 	"seed-2-0",
 	// Tencent Hunyuan preview models.
 	"tencent/hy",
-	// Xiaomi MiMo v2.5/v2.6 (the deprecated mimo-v2-* ids are excluded).
-	"xiaomi/mimo-v2.5",
-	"xiaomi/mimo-v2.6",
+	// Xiaomi MiMo V2.5/V2.6. Matched without the vendor prefix so bare
+	// upstream ids ("mimo-v2.6-pro") and prefixed catalogue ids
+	// ("xiaomi/mimo-v2.6-flash") both resolve. The deprecated mimo-v2-pro /
+	// mimo-v2-flash / mimo-v2-omni ids are excluded (404 upstream since
+	// 2026-09-23: "This model has been deprecated").
+	"mimo-v2.5",
+	"mimo-v2.6",
 ];
 
 /**
@@ -166,6 +177,10 @@ export const IMAGE_PATTERNS: string[] = [
 	"deepseek-v4-flash-vision",
 	"deepseek-v4.1-flash",
 	"qwen3.5-omni",
+	// MiMo V2.6 is omni-modal; image input accepted live on TokenRouter on
+	// 2026-09-23 (the catalogue's "Text" tag is incomplete). Scoped to v2.6
+	// because pi's own Xiaomi catalog marks mimo-v2.5-pro text-only.
+	"mimo-v2.6",
 	"mimo-v2-omni",
 ];
 
@@ -182,6 +197,12 @@ export const CONTEXT_WINDOWS: Array<[RegExp, number]> = [
 	[/gemini/, 1_000_000],
 	[/^openai\/gpt-5|^openai\/gpt-6|^openai\/o[134]/, 400_000],
 	[/^anthropic\//, 200_000],
+	// Xiaomi MiMo V2.5/V2.6: 1M-token context. Verified live 2026-09-23 — the
+	// TokenRouter gateway answers "maximum context length is 1048576 tokens"
+	// for mimo-v2.6-flash/-pro; V2.5 reports 1050000 and pi's own Xiaomi and
+	// OpenRouter catalogs list 1048576 for both generations (the conservative
+	// canonical value). Must precede any generic xiaomi rule.
+	[/mimo-v2\.(?:5|6)/, 1_048_576],
 	// DeepSeek V4.1 Flash: 1M-token context (model card; verified live with a
 	// 170k-token prompt). Must precede the generic deepseek rule.
 	[/deepseek-v4\.1-flash/, 1_000_000],
@@ -211,6 +232,10 @@ export function getContextWindow(id: string): number {
  * range ...").
  */
 export const MAX_OUTPUT_TOKENS: Array<[RegExp, number]> = [
+	// Xiaomi MiMo V2.5/V2.6: 131,072-token completion cap (pi's Xiaomi and
+	// OpenRouter catalogs agree). Accepted live 2026-09-23: a mimo-v2.6-flash
+	// request with max_tokens=131072 completes normally.
+	[/mimo-v2\.(?:5|6)/, 131_072],
 	// Verified live 2026-09-21: range [1, 393216] for both.
 	[/deepseek-v4\.1-flash|deepseek-v4-flash-vision/, 393_216],
 ];
@@ -267,6 +292,11 @@ export function getModelApi(id: string): "openai-completions" | "openai-response
  * without one use null (toggle reasoning off client-side instead).
  */
 export const THINKING_LEVEL_MAPS: Array<{ pattern: RegExp; map: Record<string, string | null> }> = [
+	// Xiaomi MiMo V2.5/V2.6 deliberately have NO map (matching pi's built-in
+	// Xiaomi catalog): live probes on 2026-09-23 showed the upstream accepts
+	// the full none..max enum while the value itself is a no-op, so effort
+	// levels pass through unchanged. The on/off toggle still comes from
+	// `thinkingFormat: "deepseek"` in toPiModel.
 	// Z.AI GLM-5.3/5.2 always reason; TokenRouter upstream rejects disabling
 	// ("cannot be disabled; please use low, high, or max").
 	{
@@ -345,6 +375,7 @@ export function getThinkingLevelMap(id: string): Record<string, string | null> |
 
 export function toPiModel(model: TokenRouterModel) {
 	const id = model.id;
+	const isMiMoV2Model = /mimo-v2\.(?:5|6)/i.test(id);
 	return {
 		id,
 		api: getModelApi(id),
@@ -360,6 +391,16 @@ export function toPiModel(model: TokenRouterModel) {
 			supportsDeveloperRole: false,
 			maxTokensField: getMaxTokensField(id),
 			supportsReasoningEffort: true,
+			// MiMo replays reasoning under `reasoning_content` and needs the field
+			// present on assistant turns — the same compat block pi's built-in
+			// Xiaomi catalog uses for mimo-v2.6. Both shapes probed live on
+			// 2026-09-23 against TokenRouter: thinking.type on/off + reasoning_effort
+			// are accepted, and an assistant message carrying reasoning_content
+			// round-trips.
+			...(isMiMoV2Model && {
+				requiresReasoningContentOnAssistantMessages: true,
+				thinkingFormat: "deepseek" as const,
+			}),
 		},
 	};
 }
