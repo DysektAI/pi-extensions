@@ -51,7 +51,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 
 | Extension | Role |
 |-----------|------|
-| `config` | `/config` menu: registered settings + model-role pickers |
+| `config` | `/config` menu: registered settings, subagent model lists, model-role pickers |
 | `session-recap` | Post-turn recap footer; registers `recaps` with `/config` |
 | `clear-command` | `/clear` alias for `/new` with full redraw |
 | `status-tracker` | Working-status timer |
@@ -72,7 +72,8 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
 | `tokenrouter-provider` | Optional TokenRouter routing provider (`api.tokenrouter.com`); key from `~/.pi/agent/auth.json` `tokenrouter` entry or `TOKENROUTER_API_KEY`. Infers reasoning/image/context/thinking-level metadata via [pure.ts](extensions/tokenrouter/pure.ts) |
 | `typesafe` | TypeSafe/Jev decision model as the `typesafe_ask` tool (noul/choice/score), `/jev` status, optional opt-in prompt pre-checks. Credential from `~/.pi/agent/auth.json` (`typesafe`) or `TYPESAFE_API_KEY`; never bundles one ([docs](extensions/typesafe/README.md)) |
-| `_shared/model-roles` | Shared role helpers (title/recap/judge/subagent) |
+| `_shared/model-roles` | Shared role helpers (title/recap/judge) |
+| `_shared/subagent-models` | Ordered subagent model lists, per-agent lists, fail-fast health |
 | `skills/typesafe-ai` | Pi skill for designing TypeSafe integrations (primitives, state, fan-out); ships with the `typesafe` extension |
 | `_shared/config-settings` | Registry for extension settings shown in `/config` |
 
@@ -85,10 +86,15 @@ settings with `registerConfigSetting` from `_shared/config-settings.ts`.
 /config                  # interactive menu
 /config recaps on|off    # session-recap toggle (when that extension is loaded)
 /config recap            # pick recap model role
-/config title|judge|subagent
+/config title|judge
+/config subagents        # ordered subagent model list (priority 1..100)
+/config plan             # per-agent list (any ~/.pi/agent/agents/*.md name)
+/config subagent-timeout 30s
 ```
 
-Model roles are stored in `~/.pi/agent/model-roles.json` (not this repo).
+Model roles and subagent model lists are stored in
+`~/.pi/agent/model-roles.json` (not this repo). See
+[subagent model selection](extensions/subagent/README.md#model-selection).
 
 ## Context management
 

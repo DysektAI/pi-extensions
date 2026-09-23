@@ -1,32 +1,26 @@
 /**
- * subagent-models — keep user agent model pins in sync with /config roles.
+ * subagent-models — startup housekeeping for /config-owned subagent models.
  *
- * Agent definitions in ~/.pi/agent/agents/*.md pin their own `model:` and
- * `fallbackModels:`. Left to drift, those pins can point at expensive or
- * scoped-off models (e.g. kimi-k3) while the /config "Subagent model" role
- * says something else entirely — and the pins silently win at spawn time.
+ * The subagent tool resolves its model chain from model-roles.json at spawn
+ * time (see _shared/subagent-models.ts); agent files no longer carry models.
+ * On every pi startup this extension:
  *
- * This extension is the bridge: on every pi startup it rewrites those two
- * frontmatter lines from resolveSubagentChain() ("Subagent model" +
- * "Subagent fallback 1..3" from model-roles.json, cheap built-in defaults
- * when unset). /config re-applies immediately after you pick a role model,
- * so startup is only the backstop.
+ *   1. migrates the legacy single-select roles (subagent, subagentFallback1..3)
+ *      into the ordered `subagentModels` list, and
+ *   2. strips stale `model:` / `fallbackModels:` pins from
+ *      ~/.pi/agent/agents/*.md so no file suggests a model that is not used.
  *
  * Project agents (<project>/.pi/agents/*.md) are never touched.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { applySubagentChainToAgents } from "../_shared/model-roles.ts";
+import { migrateLegacySubagentRoles, stripModelPinsFromAgents } from "../_shared/subagent-models.ts";
 
 export default function (_pi: ExtensionAPI) {
 	try {
-		const { updated, chain } = applySubagentChainToAgents();
-		if (updated.length > 0 && chain.length > 0) {
-			console.log(
-				`[subagent-models] synced ${updated.join(", ")} to ${chain[0]} (+${chain.length - 1} fallbacks)`,
-			);
-		}
+		migrateLegacySubagentRoles();
+		stripModelPinsFromAgents();
 	} catch {
-		// Agent sync must never break pi startup.
+		// Housekeeping must never break pi startup.
 	}
 }

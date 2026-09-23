@@ -19,8 +19,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import configExtension, { applyRoleValue, roleModelRuntime } from "./index.ts";
-import { getRoleValue, ROLE_SPECS, setRoleValue } from "../_shared/model-roles.ts";
+import configExtension, { agentListRow, parsePriority, roleModelRuntime, sharedListRow } from "./index.ts";
+import { getSubagentModels, setSubagentModels } from "../_shared/subagent-models.ts";
+import { getRoleValue, setRoleValue } from "../_shared/model-roles.ts";
 // The TUI picker test constructs core's real ModelSelectorComponent, which
 // needs @earendil-works/pi-coding-agent resolvable (at pi runtime it always
 // is; for tests, symlink pi-fork's workspace into node_modules — gitignored).
@@ -220,16 +221,79 @@ describe("non-TUI role picker", () => {
 	});
 });
 
-describe("applyRoleValue", () => {
-	it("syncs agent pins for the subagent family into the tmp agent dir", async () => {
-		const { ctx, notifications } = makeCtx();
-		const spec = ROLE_SPECS.find((s) => s.role === "subagent")!;
-		// Sync targets <agentDir>/agents — build it inside the tmp dir.
+describe("/config subagents list editor", () => {
+	function scriptedUi(ctx: any, script: Array<(title: string, options: string[]) => string | undefined>, inputs: string[] = []) {
+		const titles: string[] = [];
+		ctx.ui.select = async (title: string, options: string[]) => {
+			titles.push(title);
+			const step = script.shift();
+			return step ? step(title, options) : undefined;
+		};
+		ctx.ui.input = async () => inputs.shift();
+		ctx.ui.confirm = async () => true;
+		ctx.mode = "rpc"; // legacy static model list, driven by select
+		ctx.modelRegistry = makeRegistry(
+			MODELS.map((m) => ({ ...m, reasoning: true, thinkingLevelMap: { xhigh: "xhigh", max: "max" } })) as any,
+		);
+		return titles;
+	}
+	const pick = (needle: string) => (_t: string, o: string[]) => o.find((x) => x.includes(needle));
+
+	it("adds models in order with reasoning and an explicit priority", async () => {
+		const handler = getHandler();
+		const { ctx } = makeCtx();
+		scriptedUi(
+			ctx,
+			[
+				pick("+ Add model"),
+				pick("muse-spark-1.3"),
+				pick("xhigh"),
+				pick("+ Add model"),
+				pick("mimo-v2.6"),
+				pick("high"),
+				pick("Done"),
+			],
+			["1"], // second model jumps to priority 1
+		);
+		await handler("subagents", ctx);
+		assert.deepEqual(getSubagentModels(), [
+			"opencode/mimo-v2.6-flash-free:high",
+			"opencode/muse-spark-1.3-contributor-free:xhigh",
+		]);
+	});
+
+	it("sets a priority number for an existing entry", async () => {
+		setSubagentModels(["a/one", "b/two", "c/three"]);
+		const handler = getHandler();
+		const { ctx } = makeCtx();
+		scriptedUi(ctx, [pick("c/three"), pick("Set priority"), pick("Done")], ["1"]);
+		await handler("subagents", ctx);
+		assert.deepEqual(getSubagentModels(), ["c/three", "a/one", "b/two"]);
+	});
+
+	it("edits a per-agent list discovered from agent files", async () => {
 		mkdirSync(join(agentDir, "agents"), { recursive: true });
-		writeFileSync(join(agentDir, "agents", "t.md"), "---\nname: t\ndescription: d\n---\nbody\n");
-		setRoleValue("subagent", "opencode/mimo-v2.6-flash-free");
-		applyRoleValue(spec, ctx);
-		assert.equal(getRoleValue("subagent"), "opencode/mimo-v2.6-flash-free");
-		assert.ok(notifications.some((n) => n.includes("subagent chain")));
+		writeFileSync(join(agentDir, "agents", "plan.md"), "---\nname: plan\ndescription: d\n---\nbody\n");
+		setSubagentModels(["a/one"]);
+		const handler = getHandler();
+		const { ctx } = makeCtx();
+		scriptedUi(ctx, [pick("+ Add model"), pick("mimo-v2.6"), pick("Model default"), pick("Done")]);
+		await handler("plan", ctx);
+		assert.deepEqual(getSubagentModels("plan"), ["opencode/mimo-v2.6-flash-free"]);
+		assert.deepEqual(getSubagentModels(), ["a/one"]);
+		assert.ok(agentListRow("plan").includes("then Subagent models"));
+	});
+
+	it("parsePriority accepts only whole numbers in range", () => {
+		assert.equal(parsePriority("3", 5), 3);
+		assert.equal(parsePriority(" 1 ", 5), 1);
+		assert.equal(parsePriority("0", 5), undefined);
+		assert.equal(parsePriority("6", 5), undefined);
+		assert.equal(parsePriority("2.5", 5), undefined);
+		assert.equal(parsePriority("", 5), undefined);
+	});
+
+	it("shows an explicit 'none' row when nothing is configured", () => {
+		assert.ok(sharedListRow().includes("none"));
 	});
 });

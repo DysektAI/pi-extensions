@@ -60,12 +60,15 @@ export function listConfigSettings(): ConfigSetting[] {
 }
 
 /**
- * Toggle/cycle a setting to the next value that differs from the current one
+ * Toggle/cycle a setting to the next value in order, wrapping around
  * (for two-value toggles this flips on↔off).
  */
 export function cycleConfigSetting(setting: ConfigSetting): string {
 	const current = setting.get();
-	const next = setting.values.find((v) => v !== current) ?? setting.values[0] ?? current;
+	const idx = setting.values.indexOf(current);
+	// Advance to the next value (wrapping), so multi-value settings cycle through
+	// every option; unknown current values start at the first option.
+	const next = setting.values.length === 0 ? current : setting.values[(idx + 1) % setting.values.length]!;
 	setting.set(next);
 	return next;
 }

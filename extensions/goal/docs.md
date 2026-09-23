@@ -183,42 +183,7 @@ This plan is embedded in the kickoff prompt and referenced in every continuation
 
 ### Subagent model ownership
 
-The `/goal` extension does **not** select, override, route, or fallback subagent models. It only suggests when to use subagents. Model choice is centralized in each subagent file and executed by the `subagent` extension.
-
-| Agent type | Model source of truth |
-| ------------ | ----------------------- |
-| `scout` | `~/.pi/agent/agents/scout.md` |
-| `implement` | `~/.pi/agent/agents/implement.md` |
-| `review` | `~/.pi/agent/agents/review.md` |
-| `plan` | `~/.pi/agent/agents/plan.md` |
-
-Each agent file can define:
-
-```yaml
-model: provider/model-id
-fallbackModels: provider/fallback-1, provider/fallback-2
-```
-
-The `subagent` extension tries `model` first, then advances through `fallbackModels` if the model call fails. This keeps direct subagent calls and `/goal`-created subagent calls deterministic and consistent.
-
-### Scout model fallback handling
-
-Scout tasks (reading files, grepping, finding imports, summarising code) look simple but a too-weak model silently misunderstands code structure. Scout model selection is centralized in `~/.pi/agent/agents/scout.md`; the `/goal` extension does not duplicate this fallback chain. The subagent extension tries the scout `model` first and then `fallbackModels` if the model call fails.
-
-| Priority | Model | Why |
-| ---------- | ------- | ----- |
-| 1 | `fireworks/accounts/fireworks/routers/kimi-k2p5-turbo` | Fast load-balanced router, strong code reading |
-| 2 | `fireworks/accounts/fireworks/models/glm-5p1` | Fast Fireworks recon fallback |
-| 3 | `fireworks/accounts/fireworks/models/kimi-k2p6` | Fast hosted Kimi fallback |
-| 4 | `fireworks/accounts/fireworks/models/deepseek-v4-pro` | Fast hosted deep-code fallback |
-| 5 | `xiaomi-token-plan-sgp/mimo-v2.5-pro` | Pro MiMo fallback; intentionally **not** non-pro `mimo-v2.5` |
-| fallback | Subagent failure fallback | The subagent tool advances through `fallbackModels` automatically if a model attempt fails |
-
-Edit `~/.pi/agent/agents/scout.md` to change this order. This keeps normal `subagent scout` calls and `/goal`-created scout calls on the same source of truth.
-
-**Is Kimi K2.5 Turbo overkill for scout?** No. The `k2p5-turbo` is a load-balanced router — fast *and* capable enough for complex code reading. Models that are too cheap (sub-8B) fail silently by misidentifying what they're looking for in the codebase.
-
-To change scout routing, edit `~/.pi/agent/agents/scout.md`. Do not configure scout routing in `/goal`.
+The `/goal` extension does **not** select, override, route, or fallback subagent models. It only suggests when to use subagents. Model choice lives in `/config` ("Subagent models" plus optional per-agent lists such as "Plan models") and is executed by the `subagent` extension, which tries the list in priority order with fail-fast fallback. See [subagent model selection](../subagent/README.md#model-selection).
 
 ### Disabling decomposition
 

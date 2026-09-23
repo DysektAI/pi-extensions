@@ -22,7 +22,14 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { resolveSubagentChain } from "../_shared/model-roles.ts";
+import {
+	getFailFastTimeoutSec,
+	markModelFailure,
+	markModelSuccess,
+	orderByHealth,
+	readModelHealth,
+	resolveAgentModelChain,
+} from "../_shared/subagent-models.ts";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -328,22 +335,36 @@ async function runSingleAgent(
 		};
 	}
 
-	// /config (model-roles.json: Subagent model + fallbacks 1..3, with :thinking
-	// suffixes) is the single source of truth. Agent frontmatter `model:` /
-	// `fallbackModels:` and per-call overrides are deliberately ignored, so no
-	// agent definition or tool call can route a child to a different model.
-	const modelsToTry: string[] = resolveSubagentChain();
-	const primaryModel = modelsToTry[0];
+	// /config is the single source of truth: the agent's own ordered list (if
+	// set) followed by the shared "Subagent models" list. Agent frontmatter
+	// pins and per-call overrides do not exist. No built-in defaults.
+	const configured = resolveAgentModelChain(agent.name);
+	if (configured.length === 0) {
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: "No subagent models configured. Open /config → \"Subagent models\" and add at least one model.",
+			usage: emptyUsage(),
+			step,
+		};
+	}
+	// Models that failed recently (any process) go to the back of the queue so a
+	// provider outage costs one fail-fast timeout, not one per spawn.
+	const modelsToTry = orderByHealth(configured, readModelHealth());
+	const failFastMs = getFailFastTimeoutSec() * 1000;
+	const stallMs = Math.max(120_000, failFastMs * 4);
+	const attemptNotes: string[] = [];
 
 	let lastResult: SingleResult | null = null;
 
 	for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
-		const model = modelsToTry[attempt];
-		const isFallback = attempt > 0;
+		const model = modelsToTry[attempt]!;
+		const nextModel = modelsToTry[attempt + 1];
 
-		// Build args for this attempt
-		const args: string[] = ["--mode", "json", "-p", "--no-session"];
-		if (model) args.push("--model", model);
+		const args: string[] = ["--mode", "json", "-p", "--no-session", "--model", model];
 		if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 		// Child sessions should not rediscover the full resource catalog unless the
 		// agent explicitly needs it. This keeps the default scout/review path small.
@@ -353,22 +374,28 @@ async function runSingleAgent(
 		let tmpPromptDir: string | null = null;
 		let tmpPromptPath: string | null = null;
 
+		const notesPrefix = attemptNotes.length > 0 ? `${attemptNotes.join("\n")}\n` : "";
 		const currentResult: SingleResult = {
 			agent: agentName,
 			agentSource: agent.source,
 			task,
 			exitCode: 0,
 			messages: [],
-			stderr: isFallback ? `(fallback from ${primaryModel} to ${model})\n` : "",
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-			model: model,
+			stderr: notesPrefix,
+			usage: emptyUsage(),
+			model,
 			step,
 		};
 
-		const emitUpdate = () => {
+		const emitUpdate = (status?: string) => {
 			if (onUpdate) {
 				onUpdate({
-					content: [{ type: "text", text: getFinalOutput(currentResult.messages) || (isFallback ? `(retrying with ${model}...)` : "(running...)") }],
+					content: [
+						{
+							type: "text",
+							text: status || getFinalOutput(currentResult.messages) || (attempt > 0 ? `(fallback: running on ${model}...)` : "(running...)"),
+						},
+					],
 					details: makeDetails([currentResult]),
 				});
 			}
@@ -385,6 +412,11 @@ async function runSingleAgent(
 
 			args.push(`Task: ${task}`);
 			let wasAborted = false;
+			// Set when we kill the child before it produced any output.
+			let failFastReason: string | undefined;
+			// Set once the model streams real output; after that pi's own retry
+			// handles transient errors and we stop fail-fast monitoring.
+			let committed = false;
 
 			const exitCode = await new Promise<number>((resolve) => {
 				const invocation = getPiInvocation(args);
@@ -394,6 +426,39 @@ async function runSingleAgent(
 					stdio: ["ignore", "pipe", "pipe"],
 				});
 				let buffer = "";
+				let connectTimer: NodeJS.Timeout | undefined;
+				let stallTimer: NodeJS.Timeout | undefined;
+				const clearTimers = () => {
+					if (connectTimer) clearTimeout(connectTimer);
+					if (stallTimer) clearTimeout(stallTimer);
+					connectTimer = stallTimer = undefined;
+				};
+				const terminate = () => {
+					proc.kill("SIGTERM");
+					setTimeout(() => {
+						if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+					}, 3000).unref();
+				};
+				// The last model has nothing to fall back to: let it run (and let
+				// pi's own retry work) instead of killing a slow-but-working model.
+				const canFallBack = nextModel !== undefined;
+				const failFast = (reason: string) => {
+					if (!canFallBack || committed || failFastReason || wasAborted) return;
+					failFastReason = reason;
+					clearTimers();
+					terminate();
+				};
+				const commit = () => {
+					if (committed) return;
+					committed = true;
+					clearTimers();
+				};
+				if (canFallBack) {
+					connectTimer = setTimeout(
+						() => failFast(`no response within ${failFastMs / 1000}s`),
+						failFastMs,
+					);
+				}
 
 				const processLine = (line: string) => {
 					if (!line.trim()) return;
@@ -402,6 +467,25 @@ async function runSingleAgent(
 						event = JSON.parse(line);
 					} catch {
 						return;
+					}
+
+					// Provider answered (HTTP headers in): switch from the connect
+					// deadline to a longer "first output" stall deadline.
+					if (event.type === "message_start" && event.message?.role === "assistant" && !committed) {
+						if (connectTimer) clearTimeout(connectTimer);
+						connectTimer = undefined;
+						if (!stallTimer && canFallBack) {
+							stallTimer = setTimeout(
+								() => failFast(`connected but no output within ${Math.round(stallMs / 1000)}s`),
+								stallMs,
+							);
+						}
+					}
+					if (event.type === "message_update" && !committed) commit();
+					// Pi is about to back off and retry: on an unproven model, skip
+					// straight to the next one instead of waiting out the backoff.
+					if (event.type === "auto_retry_start" && !committed) {
+						failFast(`provider error: ${event.errorMessage ?? "unknown"}`);
 					}
 
 					if (event.type === "message_end" && event.message) {
@@ -419,9 +503,12 @@ async function runSingleAgent(
 								currentResult.usage.cost += usage.cost?.total || 0;
 								currentResult.usage.contextTokens = usage.totalTokens || 0;
 							}
-							if (!currentResult.model && msg.model) currentResult.model = msg.model;
 							if (msg.stopReason) currentResult.stopReason = msg.stopReason;
 							if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
+							if (!committed) {
+								if (msg.stopReason === "error") failFast(`provider error: ${msg.errorMessage ?? "unknown"}`);
+								else commit();
+							}
 						}
 						emitUpdate();
 					}
@@ -444,40 +531,52 @@ async function runSingleAgent(
 				});
 
 				proc.on("close", (code) => {
+					clearTimers();
 					if (buffer.trim()) processLine(buffer);
-					resolve(code ?? 0);
+					resolve(code ?? 1);
 				});
 
-				proc.on("error", () => {
+				proc.on("error", (err) => {
+					clearTimers();
+					currentResult.stderr += `${err.message}\n`;
 					resolve(1);
 				});
 
 				if (signal) {
 					const killProc = () => {
 						wasAborted = true;
-						proc.kill("SIGTERM");
-						setTimeout(() => {
-							if (!proc.killed) proc.kill("SIGKILL");
-						}, 5000);
+						clearTimers();
+						terminate();
 					};
 					if (signal.aborted) killProc();
 					else signal.addEventListener("abort", killProc, { once: true });
 				}
 			});
 
-			currentResult.exitCode = exitCode;
+			currentResult.exitCode = failFastReason ? 1 : exitCode;
 			currentResult.elapsedMs = Date.now() - startedAt;
 			if (wasAborted) throw new Error("Subagent was aborted");
 
-			// Check if this attempt succeeded
-			const isError = currentResult.exitCode !== 0 || currentResult.stopReason === "error";
+			const isError = !!failFastReason || currentResult.exitCode !== 0 || currentResult.stopReason === "error";
 			if (!isError) {
-				// Success! Return this result
+				markModelSuccess(model);
 				return currentResult;
 			}
 
-			// Failed - save for potential later reporting and try next fallback
+			const reason =
+				failFastReason ||
+				currentResult.errorMessage ||
+				lastLine(currentResult.stderr.slice(notesPrefix.length)) ||
+				`exit code ${currentResult.exitCode}`;
+			// Only failures before the model produced output count against its
+			// health; a mid-task failure says more about the task than the model.
+			if (!committed) markModelFailure(model, reason);
+			const note = `(model ${attempt + 1}/${modelsToTry.length} ${model} failed after ${formatDuration(currentResult.elapsedMs)}: ${reason})`;
+			attemptNotes.push(note);
+			currentResult.stderr = `${attemptNotes.join("\n")}\n${currentResult.stderr.slice(notesPrefix.length)}`;
+			if (!currentResult.errorMessage) currentResult.errorMessage = reason;
 			lastResult = currentResult;
+			if (nextModel) emitUpdate(`${note} — falling back to ${nextModel}`);
 		} finally {
 			if (tmpPromptPath)
 				try {
@@ -494,8 +593,17 @@ async function runSingleAgent(
 		}
 	}
 
-	// All models exhausted - return the last failure
+	// All models exhausted - return the last failure (stderr lists every attempt)
 	return lastResult!;
+}
+
+function emptyUsage(): UsageStats {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+}
+
+function lastLine(text: string): string {
+	const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+	return (lines[lines.length - 1] ?? "").slice(0, 300);
 }
 
 const TaskItem = Type.Object({

@@ -3,7 +3,7 @@
  *
  * A "role" is a named slot for a helper model used by extensions, separate from
  * the main chat model you pick with /model. Roles let cheap/background work
- * (session recaps, auto titles, the goal judge, subagents) target whichever
+ * (session recaps, auto titles, the goal judge) target whichever
  * model you prefer, without hardcoding provider/model IDs in each extension.
  *
  * Configuration lives in ~/.pi/agent/model-roles.json:
@@ -12,10 +12,14 @@
  *     "roles": {
  *       "recap":    "google-aistudio/gemini-flash-lite-latest",
  *       "title":    "google-aistudio/gemini-flash-lite-latest",
- *       "judge":    "anthropic/claude-opus-4-5",
- *       "subagent": "anthropic/claude-sonnet-4-5"
- *     }
+ *       "judge":    "anthropic/claude-opus-4-5"
+ *     },
+ *     "subagentModels": ["provider/id:level", ...],      // priority order
+ *     "agentModels": { "plan": ["provider/id:level"] }  // optional per agent
  *   }
+ *
+ * Subagent model lists live in ./subagent-models.ts and have NO built-in
+ * defaults: subagents only ever run on models the user put in /config.
  *
  * Each value is a single "provider/id" string, or "auto" / unset to fall back
  * to the role's built-in default candidates and ultimately ctx.model.
@@ -25,11 +29,11 @@
  * read and write.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export type ModelRole = "recap" | "title" | "judge" | "subagent" | "subagentFallback1" | "subagentFallback2" | "subagentFallback3";
+export type ModelRole = "recap" | "title" | "judge";
 
 /** A provider/id pair, e.g. { provider: "google-aistudio", id: "gemini-flash-lite-latest" }. */
 export interface ModelRef {
@@ -81,35 +85,6 @@ export const ROLE_SPECS: RoleSpec[] = [
 			{ provider: "openai", id: "gpt-4o" },
 		],
 	},
-	{
-		role: "subagent",
-		label: "Subagent model",
-		description: "Default model for scout / implement / review agents",
-		defaults: [
-			{ provider: "opencode", id: "muse-spark-1.3-contributor-free" },
-			{ provider: "opencode", id: "mimo-v2.6-flash-free" },
-			{ provider: "opencode", id: "muse-spark-1.2-contributor-free" },
-			{ provider: "tokenrouter", id: "deepseek/deepseek-v4.1-flash" },
-		],
-	},
-	{
-		role: "subagentFallback1",
-		label: "Subagent fallback 1",
-		description: "First fallback when the subagent model is unavailable (unset = skip)",
-		defaults: [],
-	},
-	{
-		role: "subagentFallback2",
-		label: "Subagent fallback 2",
-		description: "Second fallback when the subagent model is unavailable (unset = skip)",
-		defaults: [],
-	},
-	{
-		role: "subagentFallback3",
-		label: "Subagent fallback 3",
-		description: "Last-resort fallback for subagents (unset = skip)",
-		defaults: [],
-	},
 ];
 
 const AUTO = "auto";
@@ -122,8 +97,30 @@ export function rolesConfigPath(): string {
 	return join(agentDir(), "model-roles.json");
 }
 
-interface RolesFile {
-	roles?: Partial<Record<ModelRole, string>>;
+/** Full model-roles.json shape (roles + subagent model lists). */
+export interface RolesFile {
+	/** Role values; may still contain legacy subagent* keys until migrated. */
+	roles?: Partial<Record<ModelRole, string>> & Record<string, string | undefined>;
+	/** Ordered subagent model chain (index 0 = priority 1). */
+	subagentModels?: string[];
+	/** Optional per-agent ordered chains, tried before subagentModels. */
+	agentModels?: Record<string, string[]>;
+	/** Fail-fast tuning for subagent spawns. */
+	subagentOptions?: { failFastTimeoutSec?: number };
+}
+
+/** Read the whole model-roles.json (empty object when missing/corrupt). */
+export function readModelRolesFile(): RolesFile {
+	return readRolesFile();
+}
+
+/** Atomically replace model-roles.json with `next`. */
+export function writeModelRolesFile(next: RolesFile): void {
+	const path = rolesConfigPath();
+	mkdirSync(dirname(path), { recursive: true });
+	const tmp = `${path}.${process.pid}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
+	renameSync(tmp, path);
 }
 
 function readRolesFile(): RolesFile {
@@ -265,7 +262,6 @@ export function resolveRoleCandidates(role: ModelRole): ModelRef[] {
 
 /** Persist a role's value. Pass "auto" (or undefined) to clear it back to defaults. Clearing also drops any `:level` thinking suffix (it lives in the same string). */
 export function setRoleValue(role: ModelRole, value: string | undefined): void {
-	const path = rolesConfigPath();
 	const current = readRolesFile();
 	const roles: Partial<Record<ModelRole, string>> = { ...current.roles };
 	if (!value || value.trim().toLowerCase() === AUTO) {
@@ -273,9 +269,7 @@ export function setRoleValue(role: ModelRole, value: string | undefined): void {
 	} else {
 		roles[role] = value.trim();
 	}
-	const next: RolesFile = { ...current, roles };
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
+	writeModelRolesFile({ ...current, roles });
 }
 
 // ---------------------------------------------------------------------------
@@ -357,160 +351,12 @@ export function scopeModels<T extends ModelLike>(models: T[], patterns?: string[
 	return out.length > 0 ? out : models;
 }
 
-// ---------------------------------------------------------------------------
-// Subagent chain — the ordered model list (primary + fallbacks) applied to
-// every user agent definition in ~/.pi/agent/agents/*.md.
-//
-// The /config menu exposes this as four single-select pickers scoped to
-// settings.json enabledModels: "Subagent model" + "Subagent fallback 1..3".
-// Order IS priority: primary first, fallback 3 last. Unset fallbacks are
-// skipped; the role defaults always fill the tail so the chain is never
-// empty and never points at a scoped-off model.
-// ---------------------------------------------------------------------------
-
-const SUBAGENT_FALLBACK_ROLES: ModelRole[] = ["subagentFallback1", "subagentFallback2", "subagentFallback3"];
-
-/**
- * Resolve the ordered subagent model chain as "provider/id" strings:
- * configured primary (or built-in cheap default) first, then configured
- * fallbacks 1..3 in order, then any remaining built-in defaults. De-duplicated.
- */
-export function resolveSubagentChain(): string[] {
-	const spec = ROLE_SPECS.find((s) => s.role === "subagent");
-	const defaults = (spec?.defaults ?? []).map(formatModelKey);
-	const chain: string[] = [];
-	const seenBase = new Set<string>();
-	// Push a full role key ("provider/id" or "provider/id:level"); de-dupe by
-	// model identity so the same model never appears twice at different efforts.
-	const pushKey = (key: string | undefined) => {
-		const ref = parseRoleKey(key);
-		if (!ref) return;
-		const base = formatModelKey(ref);
-		if (seenBase.has(base)) return;
-		seenBase.add(base);
-		chain.push(formatRoleKey(ref));
-	};
-	const configured = getRoleValue("subagent");
-	pushKey(parseRoleKey(configured) ? configured : defaults[0]);
-	for (const fb of SUBAGENT_FALLBACK_ROLES) pushKey(getRoleValue(fb));
-	for (const d of defaults) pushKey(d);
-	return chain;
-}
-
-const MANAGED_NOTE = "# Managed by /config Subagent model + fallbacks — do not hand-edit";
-
-/**
- * Pure frontmatter rewrite: set `model:` to chain[0] and `fallbackModels:` to
- * chain[1..] inside the file's YAML frontmatter block. Returns the new content
- * plus whether anything changed. Files without frontmatter or without a `name:`
- * key are returned untouched (not agent definitions).
- */
-export function applyChainToFrontmatter(content: string, chain: string[]): { content: string; changed: boolean } {
-	if (chain.length === 0) return { content, changed: false };
-	const lines = content.split("\n");
-	if (lines[0]?.trim() !== "---") return { content, changed: false };
-	let fenceEnd = -1;
-	for (let i = 1; i < lines.length; i++) {
-		if (lines[i]?.trim() === "---") {
-			fenceEnd = i;
-		break;
-		}
-	}
-	if (fenceEnd < 0) return { content, changed: false };
-	const head = lines.slice(0, fenceEnd);
-	if (!head.some((l) => /^name\s*:/.test(l))) return { content, changed: false };
-
-	const primary = chain[0]!;
-	const fallbackLine = chain.length > 1 ? `fallbackModels: ${chain.slice(1).join(", ")}` : null;
-
-	let changed = false;
-	const out = [...lines];
-	const setLine = (key: string, value: string | null, afterIndex: number): number => {
-		const idx = out.findIndex((l, i) => i > 0 && i < fenceEnd && new RegExp(`^${key}\\s*:`).test(l));
-		if (value === null) {
-			if (idx >= 0) {
-				out.splice(idx, 1);
-			fenceEnd--;
-			changed = true;
-			return idx;
-			}
-			return afterIndex;
-		}
-		if (idx >= 0) {
-			if (out[idx] !== value) {
-				out[idx] = value;
-			changed = true;
-			}
-			return idx;
-		}
-		out.splice(afterIndex, 0, value);
-		fenceEnd++;
-		changed = true;
-		return afterIndex;
-	};
-
-	// Ensure the managed note sits directly above the model line.
-	let modelIdx = out.findIndex((l, i) => i > 0 && i < fenceEnd && /^model\s*:/.test(l));
-	if (modelIdx < 0) {
-		out.splice(1, 0, MANAGED_NOTE, `model: ${primary}`);
-		fenceEnd += 2;
-		changed = true;
-		modelIdx = 2;
-	} else {
-		if (out[modelIdx] !== `model: ${primary}`) {
-			out[modelIdx] = `model: ${primary}`;
-			changed = true;
-		}
-		if (out[modelIdx - 1] !== MANAGED_NOTE) {
-			out.splice(modelIdx, 0, MANAGED_NOTE);
-		fenceEnd++;
-		changed = true;
-			modelIdx++;
-		}
-	}
-	setLine("fallbackModels", fallbackLine, modelIdx + 1);
-	return { content: out.join("\n"), changed };
-}
-
-/** Default user agents dir: ~/.pi/agent/agents (overridable for tests). */
+/** Default user agents dir: ~/.pi/agent/agents (overridable via PI_CODING_AGENT_DIR). */
 export function userAgentsDir(): string {
 	return join(agentDir(), "agents");
 }
 
-/**
- * Rewrite `model:`/`fallbackModels:` in every agent definition under dir
- * (default: the user agents dir) to match resolveSubagentChain(). Project
- * agents (<project>/.pi/agents) are intentionally left alone — those are
- * per-repo choices. Never throws; per-file failures are collected as skipped.
- */
-export function applySubagentChainToAgents(dir?: string): { updated: string[]; skipped: string[]; chain: string[] } {
-	const chain = resolveSubagentChain();
-	const target = dir ?? userAgentsDir();
-	const updated: string[] = [];
-	const skipped: string[] = [];
-	try {
-		let entries: string[];
-		try {
-			entries = readdirSync(target);
-		} catch {
-			return { updated, skipped, chain };
-		}
-		for (const entry of entries) {
-			if (!entry.endsWith(".md")) continue;
-			const file = join(target, entry);
-			try {
-				const before = readFileSync(file, "utf-8");
-				const { content, changed } = applyChainToFrontmatter(before, chain);
-				if (changed) {
-					writeFileSync(file, content);
-				updated.push(entry);
-				}
-			} catch {
-				skipped.push(entry);
-			}
-		}
-	} catch {
-		// Never break callers (startup/config UI) over agent sync.
-	}
-	return { updated, skipped, chain };
+/** Agent config dir (~/.pi/agent or PI_CODING_AGENT_DIR). */
+export function configDir(): string {
+	return agentDir();
 }
