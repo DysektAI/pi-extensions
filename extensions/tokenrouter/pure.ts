@@ -164,7 +164,11 @@ export function isReasoningModel(id: string): boolean {
 
 // ── Image input support ─────────────────────────────────────────────────────
 
-/** Vendor/model families that accept image input. */
+/**
+ * Vendor/model families that accept image input. Keep IMAGE_EXCLUSIONS in
+ * sync: any prefix broad enough to catch a whole family usually also catches
+ * a text-only sibling (see mimo-v2.5 vs mimo-v2.5-pro).
+ */
 export const IMAGE_PATTERNS: string[] = [
 	"gemini",
 	"gpt-4o",
@@ -177,15 +181,28 @@ export const IMAGE_PATTERNS: string[] = [
 	"deepseek-v4-flash-vision",
 	"deepseek-v4.1-flash",
 	"qwen3.5-omni",
-	// MiMo V2.6 is omni-modal; image input accepted live on TokenRouter on
-	// 2026-09-23 (the catalogue's "Text" tag is incomplete). Scoped to v2.6
-	// because pi's own Xiaomi catalog marks mimo-v2.5-pro text-only.
+	// MiMo V2.6 and plain V2.5 are omni-modal. Both accepted an image on
+	// TokenRouter on 2026-09-23 despite the catalog's "Text" tag; the
+	// -pro siblings are excluded below (and in pi's own Xiaomi catalog).
 	"mimo-v2.6",
+	"mimo-v2.5",
 	"mimo-v2-omni",
+];
+
+/**
+ * Ids that match IMAGE_PATTERNS but do NOT accept images — checked first,
+ * mirroring REASONING_OVERRIDES so a broad family prefix can be corrected
+ * per id. Verified live 2026-09-23: TokenRouter answers 404 "No endpoints
+ * found that support image input" for mimo-v2.5-pro, while bare mimo-v2.5
+ * describes an uploaded PNG.
+ */
+export const IMAGE_EXCLUSIONS: string[] = [
+	"mimo-v2.5-pro",
 ];
 
 export function supportsImages(id: string): boolean {
 	const key = id.toLowerCase();
+	if (IMAGE_EXCLUSIONS.some((pattern) => key.includes(pattern))) return false;
 	return IMAGE_PATTERNS.some((pattern) => key.includes(pattern));
 }
 

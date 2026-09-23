@@ -33,6 +33,7 @@ import assert from "node:assert/strict";
 import {
 	DEFAULT_CONTEXT_WINDOW,
 	DEFAULT_MAX_OUTPUT_TOKENS,
+	IMAGE_EXCLUSIONS,
 	IMAGE_PATTERNS,
 	REASONING_HEURISTICS,
 	REASONING_OVERRIDES,
@@ -188,6 +189,20 @@ describe("supportsImages", () => {
 	it("defaults to text-only", () => {
 		assert.equal(supportsImages("openai/gpt-oss-120b"), false);
 		assert.ok(IMAGE_PATTERNS.length > 0);
+	});
+
+	it("picks up plain MiMo V2.5 (accepted an image live 2026-09-23)", () => {
+		assert.equal(supportsImages("xiaomi/mimo-v2.5"), true);
+	});
+
+	it("excludes MiMo V2.5-Pro despite the broad V2.5 prefix", () => {
+		// Live probe 2026-09-23: 404 "No endpoints found that support image
+		// input" — same conclusion as pi's own Xiaomi catalog (text-only).
+		assert.ok(IMAGE_EXCLUSIONS.includes("mimo-v2.5-pro"));
+		assert.equal(supportsImages("xiaomi/mimo-v2.5-pro"), false);
+		// The V2.6 siblings stay multimodal: "v2.5-pro" must not over-match.
+		assert.equal(supportsImages("xiaomi/mimo-v2.6-pro"), true);
+		assert.equal(supportsImages("xiaomi/mimo-v2.6-pro-ultraspeed"), true);
 	});
 });
 
