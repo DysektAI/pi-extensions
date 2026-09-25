@@ -11,11 +11,11 @@ export default function typesafeExtension(pi: ExtensionAPI) {
       let text: string;
       try {
         const settings = await config();
-        text = `Jev is TypeSafe's decision model, accessed through typesafe_ask, not a subagent.\n` +
+        text = `Jev is TypeSafe's judgment model, accessed through typesafe_ask, not a subagent.\n` +
           `Credential: ${settings.apiKey ? "configured" : "missing — add a `typesafe` entry to ~/.pi/agent/auth.json (or set TYPESAFE_API_KEY) and restart Pi"}.\n` +
           `Automatic prompt pre-check: ${settings.auto ? "on" : "off"}. Enable with TYPESAFE_AUTO=on; this sends eligible prompts to TypeSafe.\n` +
           `Endpoint: ${settings.baseUrl} (model ${settings.model}).\n` +
-          `Skill: /skill:typesafe-ai. Tool enabled: ${pi.getActiveTools().includes("typesafe_ask") ? "yes" : "no"}.`;
+          `Skill: /skill:jev-judgments. Tool enabled: ${pi.getActiveTools().includes("typesafe_ask") ? "yes" : "no"}.`;
       } catch { text = "Invalid TypeSafe configuration. Check TYPESAFE_BASE_URL (HTTPS) and TYPESAFE_AUTO_THRESHOLD (0–1)."; }
       if (ctx.hasUI) ctx.ui.notify(text, "info");
       else pi.sendMessage({ customType: "typesafe-status", content: text, display: true }, { triggerTurn: false });
