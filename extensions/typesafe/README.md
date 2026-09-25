@@ -1,6 +1,6 @@
 # typesafe (Jev)
 
-Ask [TypeSafe](https://typesafe.ai)'s **Jev** decision model typed questions from Pi.
+Ask [TypeSafe](https://typesafe.ai)'s **Jev** judgment model typed questions from Pi.
 
 Jev is not a chat model, a subagent, or a named agent definition. It evaluates a
 `state` against typed questions and returns structured, calibrated answers that
@@ -38,9 +38,9 @@ reports the setup step once; `/jev` shows the current state.
 
 ## Usage
 
-The agent calls the `typesafe_ask` tool. It is instructed to use it proactively
-for classification, ranking, verification, and comparisons, and to keep mechanical
-work in code.
+The agent calls the `typesafe_ask` tool. The bundled `jev-judgments` skill
+teaches it when a bounded judgment helps, how to shape neutral evidence, which
+primitive to ask, and how to read the probabilities.
 
 ```
 typesafe_ask
@@ -69,9 +69,12 @@ pre-checks) and honors cancellation.
 
 ## Skill
 
-`skills/typesafe-ai/` teaches the agent how to design TypeSafe integrations
-(choosing primitives, shaping state, composing fan-out). Invoke with
-`/skill:typesafe-ai`, or let the agent load it on demand.
+`skills/jev-judgments/` is the agent-facing runtime guide for Jev: recognizing
+bounded judgment opportunities, sending complete and neutral evidence, choosing
+noul/choice/score, and interpreting probabilities. Invoke with
+`/skill:jev-judgments`, or let the agent load it on demand. When implementing or
+changing an API integration (rather than making ordinary `typesafe_ask` calls),
+consult the live [TypeSafe docs](https://docs.typesafe.ai).
 
 ## Development
 

@@ -71,10 +71,10 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `credential-pool` | API-key / OAuth pool rotation (example config only) |
 | `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
 | `tokenrouter-provider` | Optional TokenRouter routing provider (`api.tokenrouter.com`); key from `~/.pi/agent/auth.json` `tokenrouter` entry or `TOKENROUTER_API_KEY`. Infers reasoning/image/context/thinking-level metadata via [pure.ts](extensions/tokenrouter/pure.ts) |
-| `typesafe` | TypeSafe/Jev decision model as the `typesafe_ask` tool (noul/choice/score), `/jev` status, optional opt-in prompt pre-checks. Credential from `~/.pi/agent/auth.json` (`typesafe`) or `TYPESAFE_API_KEY`; never bundles one ([docs](extensions/typesafe/README.md)) |
+| `typesafe` | TypeSafe's Jev judgment model as the `typesafe_ask` tool (noul/choice/score), `/jev` status, optional opt-in prompt pre-checks. Credential from `~/.pi/agent/auth.json` (`typesafe`) or `TYPESAFE_API_KEY`; never bundles one ([docs](extensions/typesafe/README.md)) |
 | `_shared/model-roles` | Shared role helpers (title/recap/judge) |
 | `_shared/subagent-models` | Ordered subagent model lists, per-agent lists, fail-fast health |
-| `skills/typesafe-ai` | Pi skill for designing TypeSafe integrations (primitives, state, fan-out); ships with the `typesafe` extension |
+| `skills/jev-judgments` | Pi skill for using Jev via `typesafe_ask`: bounded-judgment triggers, neutral evidence, noul/choice/score primitives, reading probabilities; ships with the `typesafe` extension |
 | `_shared/config-settings` | Registry for extension settings shown in `/config` |
 
 ## `/config`
