@@ -1,6 +1,6 @@
 import { type ExtensionAPI, type ExtensionContext, SettingsManager } from "@earendil-works/pi-coding-agent";
 
-import { compactionThreshold } from "./_shared/compaction-threshold.ts";
+import { compactionThreshold, shouldResumeAfterCompaction } from "./_shared/compaction-threshold.ts";
 
 /**
  * Pi's built-in threshold check runs after agent_end, at contextWindow - reserveTokens.
@@ -43,8 +43,11 @@ export default function contextManagement(pi: ExtensionAPI): void {
 		if (usage?.tokens == null || usage.tokens < threshold) return;
 
 		compactionPending = true;
-		// A turn without tool results ends the run; only resume runs that were mid-task.
-		const shouldResume = event.toolResults.length > 0 && !ctx.isIdle();
+		const shouldResume = shouldResumeAfterCompaction({
+			toolResults: event.toolResults.length,
+			pendingMessages: ctx.hasPendingMessages(),
+			idle: ctx.isIdle(),
+		});
 		if (ctx.hasUI) {
 			ctx.ui.notify(
 				`Proactive compaction at ${Math.round(usage.tokens / 1000)}K tokens ` +
@@ -60,7 +63,7 @@ export default function contextManagement(pi: ExtensionAPI): void {
 					pi.sendMessage(
 						{
 							customType: "proactive-compaction",
-							content: "Proactive context compaction completed. Continue the interrupted task.",
+							content: "Proactive context compaction completed. Continue the interrupted task and any queued messages.",
 							display: false,
 						},
 						{ deliverAs: "steer", triggerTurn: true },

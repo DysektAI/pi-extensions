@@ -51,3 +51,16 @@ export function compactionThreshold(
 	if (configured === undefined) return builtin;
 	return builtin === undefined ? configured : Math.min(configured, builtin);
 }
+
+/**
+ * Whether to restart the run after proactive compaction. ctx.compact() aborts the
+ * active run and never continues it, so resume whenever the run would have gone
+ * on: after tool results, or when steering/follow-up messages are queued.
+ */
+export function shouldResumeAfterCompaction(state: {
+	toolResults: number;
+	pendingMessages: boolean;
+	idle: boolean;
+}): boolean {
+	return !state.idle && (state.toolResults > 0 || state.pendingMessages);
+}
