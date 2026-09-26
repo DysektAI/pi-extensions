@@ -74,6 +74,7 @@ function withHeader(name: string, builtin: AnyTool): AnyTool {
 	const renderCall = builtin.renderCall;
 	if (!renderCall) return builtin;
 	const prompt = name === "powershell" ? "PS>" : "$";
+	const renderResult = builtin.renderResult;
 	return {
 		...builtin,
 		renderCall(args, theme, context) {
@@ -82,6 +83,20 @@ function withHeader(name: string, builtin: AnyTool): AnyTool {
 				? decorateShellCall(name, prompt, component, args as { command?: unknown; timeout?: unknown }, theme)
 				: decorateToolCall(name, component, args as Record<string, unknown>, theme, context.cwd);
 		},
+		...(renderResult && name === "edit"
+			? {
+					renderResult(result, options, theme, context) {
+						const component = renderResult(result, options, theme, context);
+						// Edit's result renderer rebuilds the shared call component (settled
+						// error, final diff) with the plain built-in header; re-apply ours.
+						const callComponent = (context.state as { callComponent?: unknown } | undefined)?.callComponent;
+						if (callComponent) {
+							decorateToolCall(name, callComponent, context.args as Record<string, unknown>, theme, context.cwd);
+						}
+						return component;
+					},
+				}
+			: {}),
 	};
 }
 
