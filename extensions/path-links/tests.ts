@@ -18,6 +18,11 @@ describe("linkifyInlineCode", () => {
 		assert.equal(linkifyInlineCode(md, mark), "```\n`src/a.ts`\n```\n~~~~\n`src/b.ts`\n~~~~~\n<src/c.ts>");
 	});
 
+	it("skips fences inside blockquotes and list items", () => {
+		assert.equal(linkifyInlineCode("> ```\n> `src/a.ts`\n> ```\n`src/b.ts`", mark), "> ```\n> `src/a.ts`\n> ```\n<src/b.ts>");
+		assert.equal(linkifyInlineCode("- item\n  ```\n  `src/a.ts`\n  ```", mark), "- item\n  ```\n  `src/a.ts`\n  ```");
+	});
+
 	it("skips indented code and double-backtick spans", () => {
 		assert.equal(linkifyInlineCode("    `src/a.ts`", mark), "    `src/a.ts`");
 		assert.equal(linkifyInlineCode("``src/a.ts``", mark), "``src/a.ts``");

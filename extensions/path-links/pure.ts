@@ -34,7 +34,9 @@ export function escapeMarkdown(text: string): string {
 	return text.replace(/[\\`*_[\]<>|~]/g, "\\$&");
 }
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+// Fences may sit inside blockquotes (`> ```) or list items (indented), so strip
+// quote markers and allow any indentation before the marker.
+const FENCE = /^(?:[ \t]*>)*[ \t]*(`{3,}|~{3,})/;
 const INDENTED_CODE = /^( {4}|\t)/;
 const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/g;
 

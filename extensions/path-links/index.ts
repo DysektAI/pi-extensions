@@ -33,8 +33,10 @@ export default function pathLinks(pi: ExtensionAPI): void {
 		if (ctx.hasUI) theme = () => ctx.ui.theme;
 	});
 
-	pi.registerMarkdownTransformer((markdown) => {
-		if (!theme) return markdown;
+	pi.registerMarkdownTransformer((markdown, context) => {
+		// User messages render with preserved backslash escapes, so the escaping a
+		// link needs would show up literally (`my\_file.ts`); leave them untouched.
+		if (!theme || context.messageType === "user") return markdown;
 		const current = theme();
 		const vscode = isVscodeTerminal();
 		const hyperlinks = !vscode && getCapabilities().hyperlinks;
