@@ -26,7 +26,6 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ModelSelectorComponent } from "@earendil-works/pi-coding-agent";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
 	cycleConfigSetting,
 	getConfigSetting,
@@ -87,6 +86,21 @@ async function loadModelSelector(): Promise<typeof ModelSelectorComponent | unde
 		return undefined;
 	}
 }
+/**
+ * Thinking levels a model supports, resolved lazily from pi-ai (like the selector
+ * above) so this module loads without the pi runtime, e.g. under unit tests.
+ */
+async function supportedThinkingLevels(model: unknown): Promise<string[] | undefined> {
+	try {
+		const mod = (await import("@earendil-works/pi-ai")) as unknown as {
+			getSupportedThinkingLevels?: (model: unknown) => readonly string[];
+		};
+		return mod.getSupportedThinkingLevels ? [...mod.getSupportedThinkingLevels(model)] : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Adapter letting core's /model picker run off the extension-facing
  * ModelRegistry. Same searchable, scrollable list as /model with zero
@@ -220,7 +234,7 @@ export default function (pi: ExtensionAPI) {
 		ctx: any,
 	): Promise<RoleThinking | undefined | null> {
 		const found = ctx.modelRegistry.find(model.provider, model.id);
-		const supported: string[] = found ? [...getSupportedThinkingLevels(found)] : [...ROLE_THINKING_LEVELS];
+		const supported: string[] = (found && (await supportedThinkingLevels(found))) || [...ROLE_THINKING_LEVELS];
 		const options = ["Model default (unset)", ...supported];
 		const currentIdx = current ? supported.indexOf(current) + 1 : 0;
 		const rows = options.map((o, i) => `${i === currentIdx ? "✓ " : "  "}${o}`);
