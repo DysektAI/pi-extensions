@@ -80,6 +80,9 @@ Good — raw evidence; the question does the judging:
   observations.
 - For a second opinion, omit your first conclusion by default: send the
   underlying evidence and ask the same bounded question independently.
+- Never put credentials, API keys, tokens, or personal data in `state` or
+  `questions`: both are sent verbatim to the TypeSafe endpoint. Redact or
+  summarize them instead.
 - Neutral does not mean stripped. Include everything materially relevant to
   the judgment; do not cut context Jev needs to decide.
 
