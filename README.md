@@ -15,7 +15,7 @@ Install once, then enable/disable individual extensions with `pi config` or pack
 
 ```bash
 # pinned release
-pi install git:github.com/DysektAI/pi-extensions@v0.5.0
+pi install git:github.com/DysektAI/pi-extensions@v0.5.1
 
 # or latest main (less safe for production pins)
 pi install git:github.com/DysektAI/pi-extensions
@@ -24,7 +24,7 @@ pi install git:github.com/DysektAI/pi-extensions
 Private machines with SSH:
 
 ```bash
-pi install git:git@github.com:DysektAI/pi-extensions@v0.5.0
+pi install git:git@github.com:DysektAI/pi-extensions@v0.5.1
 ```
 
 Local checkout (dev — edits apply live, no copy):
@@ -43,7 +43,7 @@ pi install C:\Users\You\Documents\Github\pi-extensions
 
 ```bash
 pi list
-pi update git:github.com/DysektAI/pi-extensions@v0.5.0   # bump pin
+pi update git:github.com/DysektAI/pi-extensions@v0.5.1   # bump pin
 pi remove git:github.com/DysektAI/pi-extensions
 ```
 
@@ -158,7 +158,7 @@ nothing and reports setup once. Automatic per-prompt consultation is opt-in via
 {
   "packages": [
     {
-      "source": "git:github.com/DysektAI/pi-extensions@v0.5.0",
+      "source": "git:github.com/DysektAI/pi-extensions@v0.5.1",
       "extensions": [
         "extensions/config.ts",
         "extensions/session-recap.ts",
