@@ -96,7 +96,7 @@ Good — raw evidence; the question does the judging:
 
 - Ask one coherent judgment per question: the judgment goes in `instructions`,
   its possible answers in `criteria` (noul: optional map with only `true` and
-  `false` keys; choice: map of options; score: ordered level descriptions).
+  `false` keys whose values are descriptions, not booleans; choice: map of options; score: ordered level descriptions).
 - When several independent judgments use the same state, batch them in one
   `typesafe_ask` call. Do not invent speculative questions just because
   batching is available.
