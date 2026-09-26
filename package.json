@@ -1,6 +1,6 @@
 {
   "name": "@dysektai/pi-extensions",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "description": "Public-safe Pi coding-agent extensions (config menu, tasks, search, LSP, goal loop, UX helpers, and more).",
   "keywords": [
     "pi-package",
@@ -22,7 +22,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts",
+    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/_shared/compaction-threshold.tests.ts",
     "verify": "npm test"
   },
   "devDependencies": {

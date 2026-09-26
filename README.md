@@ -15,7 +15,7 @@ Install once, then enable/disable individual extensions with `pi config` or pack
 
 ```bash
 # pinned release
-pi install git:github.com/DysektAI/pi-extensions@v0.4.1
+pi install git:github.com/DysektAI/pi-extensions@v0.5.0
 
 # or latest main (less safe for production pins)
 pi install git:github.com/DysektAI/pi-extensions
@@ -24,7 +24,7 @@ pi install git:github.com/DysektAI/pi-extensions
 Private machines with SSH:
 
 ```bash
-pi install git:git@github.com:DysektAI/pi-extensions@v0.4.1
+pi install git:git@github.com:DysektAI/pi-extensions@v0.5.0
 ```
 
 Local checkout (dev — edits apply live, no copy):
@@ -43,7 +43,7 @@ pi install C:\Users\You\Documents\Github\pi-extensions
 
 ```bash
 pi list
-pi update git:github.com/DysektAI/pi-extensions@v0.4.1   # bump pin
+pi update git:github.com/DysektAI/pi-extensions@v0.5.0   # bump pin
 pi remove git:github.com/DysektAI/pi-extensions
 ```
 
@@ -55,12 +55,16 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `session-recap` | Post-turn recap footer; registers `recaps` with `/config` |
 | `clear-command` | `/clear` alias for `/new` with full redraw |
 | `status-tracker` | Working-status timer |
-| `read-full-header` | Full Read header + dependency-free `view: "outline"` source navigation |
+| `read-full-header` | Full `[Read Tool]` header + dependency-free `view: "outline"` source navigation |
 | `custom-footer` | Token / cost / cache footer |
 | `auto-title` | Auto session titles |
 | `auto-update` | Opt-in package updates on startup or via `/auto-update` |
 | `continue-button` | `/continue` command and Ctrl+Shift+C resume shortcut |
-| `context-management` | GPT-5.6 mid-run compaction guards + `/clear-implement` fresh-session handoff |
+| `context-management` | Proactive mid-run compaction (`compaction.maxContextTokens`, per-model overrides, GPT-5.6 limits) + `/clear-implement` fresh-session handoff |
+| `thinking-label` | Bold `[Thinking]` header above each visible thinking block |
+| `tool-headers` | Built-in tool calls render as a bold `[Name Tool]` header with arguments beneath; multi-line shell commands collapse to one line; file paths use the link colour (plain absolute paths in VS Code) |
+| `path-links` | Inline code naming an existing file renders as a clickable file link (plain styled text in VS Code so its own link detector opens it) |
+| `synthetic` | Optional Synthetic provider (`api.synthetic.new`), live catalog; key from `~/.pi/agent/auth.json` `synthetic` entry or `SYNTHETIC_API_KEY` |
 | `notes-box` | Global `/note` and `/notes` inbox |
 | `task-tracker` | Plan/tasks tools + UI |
 | `web-search` | Brave / DuckDuckGo search + fetch tools |
@@ -98,10 +102,19 @@ Model roles and subagent model lists are stored in
 
 ## Context management
 
-`extensions/context-management.ts` prevents long GPT-5.6 tool loops from passing
-their useful context limits before Pi's normal `agent_end` compaction check runs.
-It compacts Sol and Terra at 200K tokens and Luna at 500K, then resumes the
-interrupted run.
+`extensions/context-management.ts` compacts at `turn_end`, before Pi's normal
+`agent_end` check (`contextWindow - reserveTokens`), once context exceeds the
+effective limit, then resumes the interrupted run:
+
+- `compaction.maxContextTokens` in settings caps every model (large windows still
+  compact at a sane budget); `compaction.modelOverrides["provider/id"].maxContextTokens`
+  sets per-model values. Project settings override global ones.
+- GPT-5.6 has built-in limits (Sol/Terra 200K, Luna 500K); the lower value wins.
+
+```json
+{ "compaction": { "maxContextTokens": 400000,
+    "modelOverrides": { "tokenrouter/anthropic/claude-opus-5.5": { "maxContextTokens": 180000 } } } }
+```
 
 After brainstorming reaches an agreed implementation, use:
 
@@ -121,7 +134,7 @@ Brand-specific or machine-private pieces stay elsewhere:
 
 - DysektLB provider / startup branding
 - Orca / Herdr / local worker extensions
-- Live `credential-pool/pools.json` (local only; use `pools.example.json`)
+- Live `pools.json` (lives in `~/.pi/agent/credential-pool/`; see `pools.example.json`)
 - `codex-auth-sync` (removed): Codex CLI OAuth mirroring into Pi. Prefer built-in
   `openai-codex` login only if you use a ChatGPT subscription; otherwise use a
   gateway/provider (e.g. DysektLB) and do not leave stale `openai-codex`
@@ -145,7 +158,7 @@ nothing and reports setup once. Automatic per-prompt consultation is opt-in via
 {
   "packages": [
     {
-      "source": "git:github.com/DysektAI/pi-extensions@v0.4.1",
+      "source": "git:github.com/DysektAI/pi-extensions@v0.5.0",
       "extensions": [
         "extensions/config.ts",
         "extensions/session-recap.ts",
@@ -161,11 +174,12 @@ Or run `pi config` after install.
 
 ## Credential pool
 
-Copy the example and keep secrets out of git:
+Copy the example to the agent dir (never into the installed package, which
+`pi update` replaces) and keep secrets out of git:
 
 ```bash
-cp extensions/credential-pool/pools.example.json \
-   ~/.pi/agent/git/github.com/DysektAI/pi-extensions/extensions/credential-pool/pools.json
+mkdir -p ~/.pi/agent/credential-pool
+cp extensions/credential-pool/pools.example.json ~/.pi/agent/credential-pool/pools.json
 # edit pools.json to point at env vars
 ```
 
