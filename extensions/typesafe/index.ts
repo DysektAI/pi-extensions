@@ -11,11 +11,11 @@ export default function typesafeExtension(pi: ExtensionAPI) {
       let text: string;
       try {
         const settings = await config();
-        text = `Jev is TypeSafe's decision model, accessed through typesafe_ask, not a subagent.\n` +
+        text = `Jev is TypeSafe's judgment model, accessed through typesafe_ask, not a subagent.\n` +
           `Credential: ${settings.apiKey ? "configured" : "missing — add a `typesafe` entry to ~/.pi/agent/auth.json (or set TYPESAFE_API_KEY) and restart Pi"}.\n` +
           `Automatic prompt pre-check: ${settings.auto ? "on" : "off"}. Enable with TYPESAFE_AUTO=on; this sends eligible prompts to TypeSafe.\n` +
           `Endpoint: ${settings.baseUrl} (model ${settings.model}).\n` +
-          `Skill: /skill:typesafe-ai. Tool enabled: ${pi.getActiveTools().includes("typesafe_ask") ? "yes" : "no"}.`;
+          `Skills: /skill:jev-judgments (using Jev), /skill:typesafe-ai (building TypeSafe integrations). Tool enabled: ${pi.getActiveTools().includes("typesafe_ask") ? "yes" : "no"}.`;
       } catch { text = "Invalid TypeSafe configuration. Check TYPESAFE_BASE_URL (HTTPS) and TYPESAFE_AUTO_THRESHOLD (0–1)."; }
       if (ctx.hasUI) ctx.ui.notify(text, "info");
       else pi.sendMessage({ customType: "typesafe-status", content: text, display: true }, { triggerTurn: false });
@@ -36,15 +36,17 @@ export default function typesafeExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "typesafe_ask", label: "TypeSafe Ask (Jev)",
-    description: "Ask TypeSafe's Jev decision model typed questions about a state. Returns probabilities, not generated text. " +
+    name: "typesafe_ask", label: "Ask Jev (TypeSafe)",
+    description: "Ask Jev, TypeSafe's fast structured-judgment model, typed questions over supplied evidence; returns probabilities, not generated text. " +
+      "Consider it for bounded semantic judgments: classify, triage, label, route, sort, rank, compare, verify, score, identify the best-fit option, or get an independent second opinion. " +
+      "Noul: yes/no probability; choice: probability distribution over an option map; score: position on 2–10 ordered levels. " +
       "Requires a `typesafe` entry in ~/.pi/agent/auth.json (or TYPESAFE_API_KEY). Sends supplied state/questions to the configured TypeSafe endpoint. " +
-      "Noul: yes/no probability; choice: select from an option map; score: rate on 2–10 ordered levels. " +
       "Limits: 1–64 questions, 256 KiB request, output truncated to 50 KiB/2000 lines.",
-    promptSnippet: "Consult Jev for typed, probability-backed judgments (not a chat model or subagent)",
+    promptSnippet: "Ask Jev for fast structured judgments over supplied evidence (classify/triage/rank/verify/score/second opinion); returns probabilities, not text",
     promptGuidelines: [
-      "Use typesafe_ask proactively when calibrated classification, ranking, verification, or comparison would help; keep mechanical work in code. If no TypeSafe credential is configured, report the setup once rather than repeatedly retrying.",
-      "With typesafe_ask, ask atomic noul/choice/score questions together over the minimum necessary state. Do not send secrets. Treat probabilities as evidence, not proof or authorization.",
+      "Use typesafe_ask (Jev) for bounded semantic judgments — classify, triage, route, rank, compare, verify, score, or an independent second opinion — once the evidence is gathered. Keep open-ended generation, multi-step reasoning, and deterministic work out of it; see /skill:jev-judgments for details.",
+      "Send neutral state: the smallest complete set of raw facts, never your own tentative conclusion (omit your first answer when asking for a second opinion). Ask one judgment per question, batch independent questions over the same state, and never send secrets.",
+      "Treat probabilities as evidence, not proof or authorization; low or split results mean gather more evidence, reason it through, or ask the user. If no TypeSafe credential is configured, report the setup once rather than repeatedly retrying.",
     ],
     parameters: Type.Object({
       state: Type.String({ description: "Plain text or a JSON-encoded object/array to evaluate." }),
