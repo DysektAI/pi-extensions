@@ -1,6 +1,7 @@
 /**
  * Read enhancements:
- * - always render the built-in read tool's full header, even when collapsed;
+ * - always render the built-in read tool's full header, even when collapsed, in the
+ *   `[Read Tool]` layout shared with tool-headers;
  * - add `view: "outline"` for a compact declaration index of source files.
  *
  * Normal reads delegate to Pi's built-in implementation. Unsupported outline
@@ -15,6 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { extractOutline, renderOutline } from "./_shared/read-outline.ts";
+import { decorateToolCall } from "./tool-headers/decorate.ts";
 
 const parameters = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
@@ -79,7 +81,8 @@ export default function (pi: ExtensionAPI) {
 			);
 		},
 		renderCall(args, theme, context) {
-			return builtin.renderCall!(args, theme, { ...context, expanded: true });
+			const component = builtin.renderCall!(args, theme, { ...context, expanded: true });
+			return decorateToolCall("read", component, args as Record<string, unknown>, theme, context.cwd);
 		},
 	});
 }
