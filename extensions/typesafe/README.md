@@ -67,14 +67,16 @@ pre-checks) and honors cancellation.
 - TypeSafe's [confidence](https://docs.typesafe.ai/confidence) values describe the
   answer distribution. They are evidence, not proof or authorization to act.
 
-## Skill
+## Skills
 
 `skills/jev-judgments/` is the agent-facing runtime guide for Jev: recognizing
 bounded judgment opportunities, sending complete and neutral evidence, choosing
 noul/choice/score, and interpreting probabilities. Invoke with
-`/skill:jev-judgments`, or let the agent load it on demand. When implementing or
-changing an API integration (rather than making ordinary `typesafe_ask` calls),
-consult the live [TypeSafe docs](https://docs.typesafe.ai).
+`/skill:jev-judgments`, or let the agent load it on demand.
+
+`skills/typesafe-ai/` is the builder guide: designing TypeSafe integrations into
+applications (choosing primitives, shaping state, composing fan-out) from the live
+[TypeSafe docs](https://docs.typesafe.ai). Invoke with `/skill:typesafe-ai`.
 
 ## Development
 

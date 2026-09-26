@@ -15,7 +15,7 @@ export default function typesafeExtension(pi: ExtensionAPI) {
           `Credential: ${settings.apiKey ? "configured" : "missing — add a `typesafe` entry to ~/.pi/agent/auth.json (or set TYPESAFE_API_KEY) and restart Pi"}.\n` +
           `Automatic prompt pre-check: ${settings.auto ? "on" : "off"}. Enable with TYPESAFE_AUTO=on; this sends eligible prompts to TypeSafe.\n` +
           `Endpoint: ${settings.baseUrl} (model ${settings.model}).\n` +
-          `Skill: /skill:jev-judgments. Tool enabled: ${pi.getActiveTools().includes("typesafe_ask") ? "yes" : "no"}.`;
+          `Skills: /skill:jev-judgments (using Jev), /skill:typesafe-ai (building TypeSafe integrations). Tool enabled: ${pi.getActiveTools().includes("typesafe_ask") ? "yes" : "no"}.`;
       } catch { text = "Invalid TypeSafe configuration. Check TYPESAFE_BASE_URL (HTTPS) and TYPESAFE_AUTO_THRESHOLD (0–1)."; }
       if (ctx.hasUI) ctx.ui.notify(text, "info");
       else pi.sendMessage({ customType: "typesafe-status", content: text, display: true }, { triggerTurn: false });
@@ -44,10 +44,9 @@ export default function typesafeExtension(pi: ExtensionAPI) {
       "Limits: 1–64 questions, 256 KiB request, output truncated to 50 KiB/2000 lines.",
     promptSnippet: "Ask Jev for fast structured judgments over supplied evidence (classify/triage/rank/verify/score/second opinion); returns probabilities, not text",
     promptGuidelines: [
-      "Consider typesafe_ask (Jev) whenever a bounded semantic judgment would help — classification, triage, labeling, routing, ranking, comparison, verification, scoring, or an independent second opinion. Skip it for open-ended generation, multi-step reasoning, or deterministic work that belongs in code; gather missing context first, then judge the completed state.",
-      "Send the smallest complete and relevant evidence set as neutral state: raw or faithfully normalized facts and context, never your own tentative conclusion. For a second opinion, omit your first answer and ask the same bounded question independently.",
-      "Ask one coherent judgment per question (noul = yes/no probability, choice = distribution over defined options, score = ordered scale) and batch independent questions over the same state in one call. Do not send secrets.",
-      "Treat returned probabilities as calibrated evidence and uncertainty signals, not proof or authorization. Low or split results mean gather better evidence, reason it through, ask the user, or escalate; choose thresholds per workflow, not universally. If no TypeSafe credential is configured, report the setup once rather than repeatedly retrying.",
+      "Use typesafe_ask (Jev) for bounded semantic judgments — classify, triage, route, rank, compare, verify, score, or an independent second opinion — once the evidence is gathered. Keep open-ended generation, multi-step reasoning, and deterministic work out of it; see /skill:jev-judgments for details.",
+      "Send neutral state: the smallest complete set of raw facts, never your own tentative conclusion (omit your first answer when asking for a second opinion). Ask one judgment per question, batch independent questions over the same state, and never send secrets.",
+      "Treat probabilities as evidence, not proof or authorization; low or split results mean gather more evidence, reason it through, or ask the user. If no TypeSafe credential is configured, report the setup once rather than repeatedly retrying.",
     ],
     parameters: Type.Object({
       state: Type.String({ description: "Plain text or a JSON-encoded object/array to evaluate." }),
