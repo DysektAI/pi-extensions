@@ -19,7 +19,10 @@ Automatic API key rotation and load balancing for Pi providers. Now with **OAuth
 
 ### 1. Configure pools.json
 
-Edit `pools.json` in this directory. Each pool maps a provider name to a list of keys:
+Create `~/.pi/agent/credential-pool/pools.json` (start from `pools.example.json`). It is
+user config, so it lives in the agent dir rather than in this package, which
+`pi update` replaces. A `pools.json` next to this README is still read as a legacy
+fallback. Each pool maps a provider name to a list of keys:
 
 #### API Key Pools (default)
 

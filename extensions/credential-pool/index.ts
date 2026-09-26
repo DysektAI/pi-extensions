@@ -1,7 +1,8 @@
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -251,15 +252,30 @@ function formatDuration(ms: number): string {
 	return rs > 0 ? `${m}m${rs}s` : `${m}m`;
 }
 
+// ─── Config location ─────────────────────────────────────────────────
+
+/**
+ * pools.json is user config, so it lives in the agent dir
+ * (`~/.pi/agent/credential-pool/pools.json`), never inside this package: a managed
+ * git install is replaced on update. The in-package location is still read for
+ * existing setups, with a one-time hint to move it.
+ */
+function resolvePoolsConfigPath(): string | undefined {
+	const agentDir = getAgentDir();
+	const preferred = path.join(agentDir, "credential-pool", "pools.json");
+	if (fs.existsSync(preferred)) return preferred;
+	const extDir = path.dirname(typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url));
+	const legacy = path.join(extDir, "pools.json");
+	if (!fs.existsSync(legacy)) return undefined;
+	console.warn(`[credential-pool] Using legacy ${legacy}; move it to ${preferred}.`);
+	return legacy;
+}
+
 // ─── Extension ───────────────────────────────────────────────────────
 
 export default async function (pi: ExtensionAPI) {
-	const extDir = path.resolve(
-		path.dirname(typeof __filename !== "undefined" ? __filename : new URL(import.meta.url).pathname),
-	);
-	const configPath = path.join(extDir, "pools.json");
-
-	if (!fs.existsSync(configPath)) {
+	const configPath = resolvePoolsConfigPath();
+	if (!configPath) {
 		return;
 	}
 
