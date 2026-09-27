@@ -1,7 +1,7 @@
 {
   "name": "@dysektai/pi-extensions",
   "version": "0.5.2",
-  "description": "Public-safe Pi coding-agent extensions (config menu, tasks, search, LSP, goal loop, UX helpers, and more).",
+  "description": "Public-safe Pi coding-agent extensions (config menu, tasks, search, goal loop, UX helpers, and more).",
   "keywords": [
     "pi-package",
     "pi",

@@ -4,167 +4,94 @@
 
 Public-safe [Pi](https://github.com/earendil-works/pi) coding-agent extensions from DysektAI.
 
-Install once, then enable/disable individual extensions with `pi config` or package filters.
+Install once, then customize via `/config` or granular package filters.
 
-> **LSP moved:** The LSP extension is now a dedicated package at
-> [DysektAI/pi-lsp](https://github.com/DysektAI/pi-lsp) with managed isolated installs,
-> an interactive `/lsp` manager, and 9 tools. The lightweight `lsp.ts` that was
-> previously bundled here has been removed to prevent duplicate tool registration.
+> [!NOTE]
+> **LSP package separation:** LSP tools and the `/lsp` manager live in [DysektAI/pi-lsp](https://github.com/DysektAI/pi-lsp). `lsp.ts` was removed from this package to eliminate duplicate tool collisions.
 
-## Install
+## Installation
 
 ```bash
-# pinned release
+# Latest default branch (recommended; updates via `pi update`)
+pi install git:github.com/DysektAI/pi-extensions
+
+# Pinned release tag
 pi install git:github.com/DysektAI/pi-extensions@v0.5.2
 
-# or latest main (less safe for production pins)
-pi install git:github.com/DysektAI/pi-extensions
+# Local checkout (development — loads directly from path without copying)
+pi install /path/to/pi-extensions
 ```
 
-Private machines with SSH:
-
+Update or remove installed packages:
 ```bash
-pi install git:git@github.com:DysektAI/pi-extensions@v0.5.2
-```
-
-Local checkout (dev — edits apply live, no copy):
-
-```bash
-pi install /absolute/path/to/pi-extensions
-```
-
-On Windows, for example:
-
-```bash
-pi install C:\Users\You\Documents\Github\pi-extensions
-```
-
-## Update / remove
-
-```bash
-pi list
-pi update git:github.com/DysektAI/pi-extensions@v0.5.2   # bump pin
+pi update git:github.com/DysektAI/pi-extensions
 pi remove git:github.com/DysektAI/pi-extensions
 ```
 
-## What's included
+## Extensions
 
-| Extension | Role |
-|-----------|------|
-| `config` | `/config` menu: registered settings, subagent model lists, model-role pickers |
-| `session-recap` | Post-turn recap footer; registers `recaps` with `/config` |
-| `clear-command` | `/clear` alias for `/new` with full redraw |
-| `status-tracker` | Working-status timer |
-| `read-full-header` | Full `[Read Tool]` header + dependency-free `view: "outline"` source navigation |
-| `custom-footer` | Token / cost / cache footer |
-| `auto-title` | Auto session titles |
-| `auto-update` | Opt-in package updates on startup or via `/auto-update` |
-| `continue-button` | `/continue` command and Ctrl+Shift+C resume shortcut |
-| `context-management` | Proactive mid-run compaction (`compaction.maxContextTokens`, per-model overrides, GPT-5.6 limits) + `/clear-implement` fresh-session handoff |
-| `thinking-label` | Bold `[Thinking]` header above each visible thinking block |
-| `tool-headers` | Built-in tool calls render as a bold `[Name Tool]` header with arguments beneath; multi-line shell commands collapse to one line; file paths use the link colour (plain absolute paths in VS Code) |
-| `path-links` | Inline code naming an existing file renders as a clickable file link (plain styled text in VS Code so its own link detector opens it) |
-| `synthetic` | Optional Synthetic provider (`api.synthetic.new`), live catalog; key from `~/.pi/agent/auth.json` `synthetic` entry or `SYNTHETIC_API_KEY` |
-| `notes-box` | Global `/note` and `/notes` inbox |
-| `task-tracker` | Plan/tasks tools + UI |
-| `web-search` | Brave / DuckDuckGo search + fetch tools |
-| `context7` | Library docs via Context7 CLI |
-| `discord` | Discord REST tool: multiple bots (`DISCORD_BOT_TOKEN`, `DISCORD_BOT_TOKEN_<NAME>`, `~/.pi/agent/discord.json`) and optional user account (`DISCORD_USER_TOKEN`) |
-| `goal` | Persistent `/goal` loop + judge |
-| `subagent` | Subagent helpers ([docs](extensions/subagent/README.md)) |
-| `credential-pool` | API-key / OAuth pool rotation (example config only) |
-| `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
-| `tokenrouter-provider` | Optional TokenRouter routing provider (`api.tokenrouter.com`); key from `~/.pi/agent/auth.json` `tokenrouter` entry or `TOKENROUTER_API_KEY`. Infers reasoning/image/context/thinking-level metadata via [pure.ts](extensions/tokenrouter/pure.ts) |
-| `typesafe` | TypeSafe's Jev judgment model as the `typesafe_ask` tool (noul/choice/score), `/jev` status, optional opt-in prompt pre-checks. Credential from `~/.pi/agent/auth.json` (`typesafe`) or `TYPESAFE_API_KEY`; never bundles one ([docs](extensions/typesafe/README.md)) |
-| `windows-desktop` | Native Windows desktop automation: screenshots, mouse, keyboard, window focus (any vision-capable model; `python` + `mss`/`PIL` for the driver) |
-| `_shared/model-roles` | Shared role helpers (title/recap/judge) |
-| `_shared/subagent-models` | Ordered subagent model lists, per-agent lists, fail-fast health |
-| `skills/typesafe-ai` | Pi skill for designing TypeSafe integrations into applications (primitives, state, fan-out); ships with the `typesafe` extension |
-| `skills/jev-judgments` | Pi skill for using Jev via `typesafe_ask`: bounded-judgment triggers, neutral evidence, noul/choice/score primitives, reading probabilities; ships with the `typesafe` extension |
-| `_shared/config-settings` | Registry for extension settings shown in `/config` |
+### UX & Interface
+- **`config`**: Interactive `/config` menu for registered extension settings, subagent model chains, and helper roles.
+- **`session-recap`**: Post-turn recap footer showing changes and intent; toggled via `/config recaps on|off`.
+- **`custom-footer`**: Turn footer displaying token consumption, cost estimates, and cache hit metrics.
+- **`tool-headers`**: Visual `[Tool Name]` headers, one-line folding for long bash commands, and link-styled paths.
+- **`thinking-label`**: Bold `[Thinking]` header anchoring model reasoning blocks.
+- **`path-links`**: Formats file path mentions in inline code as clickable terminal/editor links.
+- **`clear-command`**: `/clear` alias for `/new` with complete display redraw.
+- **`auto-title` & `status-tracker`**: Background session naming and active turn elapsed timers.
+- **`continue-button`**: `/continue` command and `Ctrl+Shift+C` keybinding to resume turn generation.
+- **`notes-box`**: Global `/note <text>` scratchpad and `/notes` overview.
 
-## `/config`
+### Execution & Context
+- **`context-management`**: Proactive `turn_end` context compaction before Pi's native limits (`compaction.maxContextTokens`, per-model caps, GPT-5.6 family bounds) and `/clear-implement` clean handoffs ([details](#context-management--clear-implement)).
+- **`task-tracker`**: Structured task management tools (`task_create`, `task_update`, `task_list`) with progress rendering.
+- **`goal`**: Autonomous `/goal` execution loop with goal assessment judge ([docs](extensions/goal/docs.md)).
+- **`subagent`**: Child agent delegation (`scout`, `plan`, `implement`, `review`) with runtime model resolution from `model-roles.json` ([docs](extensions/subagent/README.md)).
 
-`extensions/config.ts` owns the `/config` command. Other extensions contribute
-settings with `registerConfigSetting` from `_shared/config-settings.ts`.
+### Providers & Routing
+- **`tokenrouter-provider`**: Dynamic provider for `api.tokenrouter.com` with automatic model capability detection. Reads `tokenrouter` from `auth.json` or `TOKENROUTER_API_KEY`.
+- **`synthetic`**: Synthetic provider (`api.synthetic.new`). Reads `synthetic` from `auth.json` or `SYNTHETIC_API_KEY`.
+- **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
+- **`credential-pool`**: API key rotation framework (template in `pools.example.json`).
 
-```bash
-/config                  # interactive menu
-/config recaps on|off    # session-recap toggle (when that extension is loaded)
-/config recap            # pick recap model role
-/config title|judge
-/config subagents        # ordered subagent model list (priority 1..100)
-/config plan             # per-agent list (any ~/.pi/agent/agents/*.md name)
-/config subagent-timeout 30s
-```
+### Integrations & Skills
+- **`typesafe`**: TypeSafe Jev bounded judgment model (`typesafe_ask` tool, `/jev`). Key from `auth.json` (`typesafe`) or `TYPESAFE_API_KEY`. Pre-checks stay disabled unless `TYPESAFE_AUTO=on` ([docs](extensions/typesafe/README.md)). Bundles `skills/typesafe-ai` and `skills/jev-judgments`.
+- **`web-search`**: Brave and DuckDuckGo web search and page fetch tools ([docs](extensions/web-search.README.md)).
+- **`context7`**: Documentation query tools powered by Context7 CLI.
+- **`discord`**: Discord REST client for bot and user tokens via `DISCORD_BOT_TOKEN*` or `~/.pi/agent/discord.json`.
+- **`windows-desktop`**: Native Windows desktop GUI automation driver (screenshots, input, focus) ([docs](extensions/windows-desktop/README.md)).
+- **`auto-update`**: Opt-in automatic package update checks on startup or via `/auto-update`.
 
-Model roles and subagent model lists are stored in
-`~/.pi/agent/model-roles.json` (not this repo). See
-[subagent model selection](extensions/subagent/README.md#model-selection).
+---
 
-## Context management
+## Operational Details
 
-`extensions/context-management.ts` compacts at `turn_end`, before Pi's normal
-`agent_end` check (`contextWindow - reserveTokens`), once context exceeds the
-effective limit, then resumes the interrupted run:
+### Configuration (`/config`)
+`extensions/config.ts` manages settings registered dynamically by other extensions via `registerConfigSetting` (`_shared/config-settings.ts`).
+Model roles (`recap`, `title`, `judge`) and ordered subagent fallback chains (`subagentModels`, `agentModels`) persist in `~/.pi/agent/model-roles.json`. Subagents resolve their model chain at spawn time, keeping agent markdown files clean of environment-specific model pins.
 
-- `compaction.maxContextTokens` in settings caps every model (large windows still
-  compact at a sane budget); `compaction.modelOverrides["provider/id"].maxContextTokens`
-  sets per-model values. Project settings override global ones.
-- GPT-5.6 has built-in limits (Sol/Terra 200K, Luna 500K); the lower value wins.
+### Context Management & `/clear-implement`
+`extensions/context-management.ts` hooks `turn_end` rather than waiting for Pi's fallback `agent_end` trigger:
+- Enforces `compaction.maxContextTokens` and per-model limits (`compaction.modelOverrides`), compacting early to preserve buffer.
+- Built-in bounds respect model-specific limits (e.g. GPT-5.6 family: Sol/Terra 200K, Luna 500K).
+- `/clear-implement [notes]`: Generates an implementation-ready handoff summary, starts a clean session without brainstorming history, and immediately prompts the new session to begin. Original sessions remain accessible via `/resume`.
 
-```json
-{ "compaction": { "maxContextTokens": 400000,
-    "modelOverrides": { "tokenrouter/anthropic/claude-opus-5.5": { "maxContextTokens": 180000 } } } }
-```
+### TypeSafe / Jev Privacy Guarantee
+`extensions/typesafe` reads credentials from `~/.pi/agent/auth.json` (`{ "typesafe": { "type": "api_key", "key": "..." } }`).
+- By default, prompt text is never transmitted without explicit `typesafe_ask` calls.
+- Automated per-prompt safety pre-checks require `TYPESAFE_AUTO=on`. Run `/jev` to verify configuration.
 
-After brainstorming reaches an agreed implementation, use:
-
-```bash
-/clear-implement
-/clear-implement optional final instruction
-```
-
-The command creates an implementation-focused summary, starts a fresh linked
-session with no raw brainstorming history, and immediately asks the new session
-to implement the handoff. The original session remains available through
-`/resume`.
-
-## Not included (on purpose)
-
-Brand-specific or machine-private pieces stay elsewhere:
-
-- DysektLB provider / startup branding
-- Orca / Herdr / local worker extensions
-- Live `pools.json` (lives in `~/.pi/agent/credential-pool/`; see `pools.example.json`)
-- `codex-auth-sync` (removed): Codex CLI OAuth mirroring into Pi. Prefer built-in
-  `openai-codex` login only if you use a ChatGPT subscription; otherwise use a
-  gateway/provider (e.g. DysektLB) and do not leave stale `openai-codex`
-  credentials in `~/.pi/agent/auth.json`.
-
-Those belong in a private package or a personal profile repo (e.g. an agent kit),
-not this public install unit.
-
-## TypeSafe / Jev
-
-`extensions/typesafe` reads its credential from a machine-private `typesafe` entry
-in `~/.pi/agent/auth.json` (a `TYPESAFE_API_KEY` env var is the fallback). It
-deliberately has no bundled key: without a credential, `typesafe_ask` sends
-nothing and reports setup once. Automatic per-prompt consultation is opt-in via
-`TYPESAFE_AUTO=on` because it transmits prompt text. See
-[extensions/typesafe/README.md](extensions/typesafe/README.md).
-
-## Optional: load a subset
-
+### Selective Extension Loading
+Filter extensions in `~/.pi/agent/settings.json` using inclusion (`path`) or exclusion (`!path`):
 ```json
 {
   "packages": [
     {
-      "source": "git:github.com/DysektAI/pi-extensions@v0.5.2",
+      "source": "git:github.com/DysektAI/pi-extensions",
       "extensions": [
         "extensions/config.ts",
         "extensions/session-recap.ts",
-        "extensions/task-tracker.ts",
+        "extensions/context-management.ts",
         "!extensions/discord.ts"
       ]
     }
@@ -172,32 +99,8 @@ nothing and reports setup once. Automatic per-prompt consultation is opt-in via
 }
 ```
 
-Or run `pi config` after install.
-
-## Credential pool
-
-Copy the example to the agent dir (never into the installed package, which
-`pi update` replaces) and keep secrets out of git:
-
-```bash
-mkdir -p ~/.pi/agent/credential-pool
-cp extensions/credential-pool/pools.example.json ~/.pi/agent/credential-pool/pools.json
-# edit pools.json to point at env vars
-```
-
-## Development notes
-
-1. Prefer **local path install** while editing this repo.
-2. Do not treat `~/.pi/agent/extensions` loose copies as the source of truth for
-   these public extensions — they will drift.
-3. Keep package defaults generic (no private provider names in fallbacks).
-4. Never edit or commit inside the installed git clone
-   (`~/.pi/agent/git/github.com/...`): it is a managed mirror that `pi update`
-   fast-forwards to `origin/main`, so local commits there are lost and
-   uncommitted edits there never reach Pi. Commit + push from your own clone,
-   then `pi update`. Definition of done: no stashes, clean trees, `main` equal
-   to `origin/main` in both checkouts (see DEVELOPMENT.md).
-
-## License
-
-MIT
+### Local Development Loop
+When developing extensions in this repository:
+1. Link your checkout: `pi install /absolute/path/to/pi-extensions`.
+2. **Never edit directly inside `~/.pi/agent/git/...`**: That directory is a git mirror fast-forwarded by `pi update`, which discards local uncommitted edits.
+3. Validate changes with `npm test` before committing.
