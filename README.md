@@ -69,7 +69,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `task-tracker` | Plan/tasks tools + UI |
 | `web-search` | Brave / DuckDuckGo search + fetch tools |
 | `context7` | Library docs via Context7 CLI |
-| `discord` | Discord REST tool (`DISCORD_BOT_TOKEN`) |
+| `discord` | Discord REST tool: multiple bots (`DISCORD_BOT_TOKEN`, `DISCORD_BOT_TOKEN_<NAME>`, `~/.pi/agent/discord.json`) and optional user account (`DISCORD_USER_TOKEN`) |
 | `goal` | Persistent `/goal` loop + judge |
 | `subagent` | Subagent helpers ([docs](extensions/subagent/README.md)) |
 | `credential-pool` | API-key / OAuth pool rotation (example config only) |
