@@ -76,6 +76,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 | `megallm-provider` | Optional MegaLLM OpenAI-compat provider |
 | `tokenrouter-provider` | Optional TokenRouter routing provider (`api.tokenrouter.com`); key from `~/.pi/agent/auth.json` `tokenrouter` entry or `TOKENROUTER_API_KEY`. Infers reasoning/image/context/thinking-level metadata via [pure.ts](extensions/tokenrouter/pure.ts) |
 | `typesafe` | TypeSafe's Jev judgment model as the `typesafe_ask` tool (noul/choice/score), `/jev` status, optional opt-in prompt pre-checks. Credential from `~/.pi/agent/auth.json` (`typesafe`) or `TYPESAFE_API_KEY`; never bundles one ([docs](extensions/typesafe/README.md)) |
+| `windows-desktop` | Native Windows desktop automation: screenshots, mouse, keyboard, window focus (any vision-capable model; `python` + `mss`/`PIL` for the driver) |
 | `_shared/model-roles` | Shared role helpers (title/recap/judge) |
 | `_shared/subagent-models` | Ordered subagent model lists, per-agent lists, fail-fast health |
 | `skills/typesafe-ai` | Pi skill for designing TypeSafe integrations into applications (primitives, state, fan-out); ships with the `typesafe` extension |
