@@ -59,12 +59,10 @@ const ZEN_MIN_RECOGNIZED_TOOLS = 2;
  */
 export function formatOpenCodeSessionId(sessionId: string): string {
 	if (OPENCODE_SESSION_PATTERN.test(sessionId)) return sessionId;
-	const hex = sessionId.toLowerCase().replace(/[^0-9a-f]/g, "");
-	if (hex.length >= 26) return `ses_${hex.slice(0, 26)}`;
 	return `ses_${hashHex(sessionId)}`;
 }
 
-/** Deterministic 26 lowercase hex characters from FNV-1a blocks for non-hex session ids. */
+/** Deterministic 26 lowercase hex characters from FNV-1a blocks over the full session id. */
 function hashHex(input: string): string {
 	let out = "";
 	for (let block = 0; out.length < 26; block++) {

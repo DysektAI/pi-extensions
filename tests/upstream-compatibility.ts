@@ -128,6 +128,10 @@ test("compatibility covers both stream APIs and tool removals without mutating i
 		formatOpenCodeSessionId("conversation-1"),
 		formatOpenCodeSessionId("conversation-1"),
 	);
+	assert.notEqual(
+		formatOpenCodeSessionId("01923456-789a-7bcd-8ef0-123456789abc"),
+		formatOpenCodeSessionId("01923456-789a-7bcd-8ef0-123456789abd"),
+	);
 });
 test("native provider and custom models survive repeated credential rotation", async () => {
 	const modelsPath = join(temp, "models.json");
@@ -527,6 +531,7 @@ test("compatibility is opt-in so upstream behavior is the default", async () => 
 		assert.equal(result.extensions[0].handlers.size, 0);
 		assert.equal(result.runtime.pendingNativeProviderRegistrations.length, 0);
 	} finally {
-		process.env.PI_OPENCODE_COMPAT = previous;
+		if (previous === undefined) delete process.env.PI_OPENCODE_COMPAT;
+		else process.env.PI_OPENCODE_COMPAT = previous;
 	}
 });
