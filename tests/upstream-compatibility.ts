@@ -27,6 +27,7 @@ import {
 import {
 	withOpenCodeCompat,
 	formatOpenCodeSessionId,
+	OPENCODE_CLIENT_USER_AGENT,
 } from "../extensions/opencode-compat/compat.js";
 import { registerPoolKey } from "../extensions/_shared/provider-key.js";
 const root = process.env.PI_UPSTREAM_ROOT;
@@ -534,4 +535,29 @@ test("compatibility is opt-in so upstream behavior is the default", async () => 
 		if (previous === undefined) delete process.env.PI_OPENCODE_COMPAT;
 		else process.env.PI_OPENCODE_COMPAT = previous;
 	}
+});
+
+test("case-insensitive duplicate headers collapse to one compat value", () => {
+	let captured: any;
+	const fn = (_model: any, _context: any, options: any) => {
+		captured = options;
+		return completed();
+	};
+	withOpenCodeCompat({ stream: fn, streamSimple: fn }).stream(
+		model as any,
+		normalizeContext({ messages: [] }),
+		{
+			headers: {
+				"user-agent": "curl/8",
+				"User-Agent": "opencode/1.0",
+				"x-opencode-session": "bad",
+				"X-OpenCode-Session": "ses_abcdef123456abcdefghijklmn",
+			},
+			sessionId: "conversation-1",
+		},
+	);
+	assert.deepEqual(captured.headers, {
+		"user-agent": OPENCODE_CLIENT_USER_AGENT,
+		"x-opencode-session": formatOpenCodeSessionId("conversation-1"),
+	});
 });

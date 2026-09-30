@@ -75,12 +75,17 @@ function hashHex(input: string): string {
 	return out.slice(0, 26);
 }
 
+/** Return the first case-insensitive match and drop later duplicates so Fetch cannot join them. */
 function findHeaderKey(
 	headers: ProviderHeaders,
 	name: string,
 ): string | undefined {
 	const expected = name.toLowerCase();
-	return Object.keys(headers).find((key) => key.toLowerCase() === expected);
+	const [first, ...duplicates] = Object.keys(headers).filter(
+		(key) => key.toLowerCase() === expected,
+	);
+	for (const key of duplicates) delete headers[key];
+	return first;
 }
 
 /**
