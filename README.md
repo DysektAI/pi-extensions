@@ -52,6 +52,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 - **`tokenrouter-provider`**: Dynamic provider for `api.tokenrouter.com` with automatic model capability detection. Reads `tokenrouter` from `auth.json` or `TOKENROUTER_API_KEY`.
 - **`synthetic`**: Synthetic provider (`api.synthetic.new`). Reads `synthetic` from `auth.json` or `SYNTHETIC_API_KEY`.
 - **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
+- **`opencode-compat`**: OpenCode Zen/Go request compatibility on upstream Pi 0.99.1+: session identifiers, client headers, and inert tool declarations for summaries and helper calls. Retains fork conventions without changing upstream adapters; live service acceptance can change independently.
 - **`credential-pool`**: API key rotation framework (template in `pools.example.json`).
 
 ### Integrations & Skills
@@ -104,3 +105,25 @@ When developing extensions in this repository:
 1. Link your checkout: `pi install /absolute/path/to/pi-extensions`.
 2. **Never edit directly inside `~/.pi/agent/git/...`**: That directory is a git mirror fast-forwarded by `pi update`, which discards local uncommitted edits.
 3. Validate changes with `npm test` before committing.
+
+### Upstream Compatibility Validation
+
+`npm test` runs the normal extension tests. The additional integration suite requires a built
+upstream Pi 0.99.1 checkout, with its `pi-ai`, `pi-coding-agent`, and `pi-tui` workspace packages
+linked into this checkout's `node_modules/@earendil-works/`. Run:
+
+```bash
+PI_UPSTREAM_ROOT=/path/to/built/upstream/pi npm run test:upstream
+```
+
+The suite uses isolated settings and fake credentials. It loads every extension with upstream's
+loader and tests native provider composition, custom models, Zen/Go API payloads, compaction,
+and credential-pool rotation in both load orders. Network responses are mocked; the suite does
+not use your account or prove that a provider's live access policy accepts the requests.
+
+OpenCode pool rotations preserve native stream handlers. Other providers retain the existing
+registration path. Keep `models.json` API-key overrides out of pooled providers, since upstream
+configuration can override provider auth.
+
+Horizontal code-block rules remain a fork renderer preference. Upstream's current extension
+API does not expose that layout setting; this package does not change it through private APIs.
