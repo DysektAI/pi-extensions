@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { registerPoolKey } from "../_shared/provider-key.js";
+
 // ─── Types ───────────────────────────────────────────────────────────
 
 interface KeySource {
@@ -487,9 +489,7 @@ export default async function (pi: ExtensionAPI) {
 			const nextKey = await rotateToNextKey(pool);
 
 			if (nextKey && !allKeysRateLimited(pool)) {
-				pi.registerProvider(provider, {
-					apiKey: nextKey.resolved,
-				});
+				registerPoolKey(pi, provider, nextKey.resolved, ctx);
 
 				const idx = pool.activeIndex + 1;
 				const total = pool.keys.length;
@@ -528,9 +528,7 @@ export default async function (pi: ExtensionAPI) {
 				// Try refreshing the current key first
 				const refreshed = await refreshKeyIfNeeded(pool, currentKey);
 				if (refreshed) {
-					pi.registerProvider(provider, {
-						apiKey: currentKey.resolved,
-					});
+					registerPoolKey(pi, provider, currentKey.resolved, ctx);
 					ctx.ui.notify(`🔑 ${provider}: key #${pool.activeIndex + 1} auth error → token refreshed`, "warning");
 					return;
 				}
@@ -539,9 +537,7 @@ export default async function (pi: ExtensionAPI) {
 			// Refresh failed or not OAuth — rotate
 			const nextKey = await rotateToNextKey(pool);
 			if (nextKey && !allKeysRateLimited(pool)) {
-				pi.registerProvider(provider, {
-					apiKey: nextKey.resolved,
-				});
+				registerPoolKey(pi, provider, nextKey.resolved, ctx);
 				ctx.ui.notify(
 					`🔄 ${provider}: key #${pool.keys.indexOf(currentKey) + 1} auth error → rotated to key #${pool.activeIndex + 1}/${pool.keys.length}`,
 					"warning",
@@ -667,9 +663,7 @@ export default async function (pi: ExtensionAPI) {
 				if (pool.isOAuth) {
 					await refreshKeyIfNeeded(pool, firstKey);
 				}
-				pi.registerProvider(provider, {
-					apiKey: firstKey.resolved,
-				});
+				registerPoolKey(pi, provider, firstKey.resolved, ctx);
 			}
 			ctx.ui.notify("🔑 All pools reset to key #1, cooldowns cleared.", "info");
 			ctx.ui.setStatus(
