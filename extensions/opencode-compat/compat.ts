@@ -17,11 +17,10 @@ const OPENCODE_SESSION_HEADER = "x-opencode-session";
 const OPENCODE_SESSION_PATTERN = /^ses_[0-9a-f]{12}[a-z0-9]{14}$/;
 
 /**
- * OpenCode Zen's free-tier gate rejects requests that declare fewer than two
- * recognized coding-tool names (HTTP 403 FreeTierError). Invented names do not count.
- * Requests below the minimum (tool-less compaction and title generation, single-tool
- * agents) declare these inert placeholders so the gate passes. Their descriptions tell
- * the model never to call them; nothing executes tool calls in those flows anyway.
+ * Retain the fork's workaround for tool-less summaries and single-tool helper calls.
+ * Placeholder descriptions tell the model never to call them; no implementation is
+ * registered. This contract was needed by earlier Zen gates and is opt-in because
+ * current models may already accept stock upstream requests.
  */
 const COMPAT_TOOLS: Tool[] = [
 	{
@@ -38,7 +37,7 @@ const COMPAT_TOOLS: Tool[] = [
 	},
 ];
 
-/** Tool names the Zen gate recognizes as coding tools (verified by probe). */
+/** Coding-tool names used by the fork compatibility contract. */
 const ZEN_RECOGNIZED_TOOL_NAMES = [
 	"bash",
 	"edit",
@@ -54,7 +53,7 @@ const ZEN_MIN_RECOGNIZED_TOOLS = 2;
 
 /**
  * Shape a conversation id like OpenCode's own session ids: `ses_` + 12 lowercase hex
- * + 14 alphanumeric characters. The Zen free-tier gate rejects other shapes, so pi's
+ * + 14 alphanumeric characters. For compatibility with the fork convention, Pi's
  * session ids are mapped deterministically to keep per-conversation routing stable.
  * Ids that already carry the shape pass through unchanged.
  */
@@ -90,7 +89,7 @@ function findHeaderKey(
  * Enforce the Zen free-tier gate's client identity on request headers. Caller values
  * win only when they already satisfy the gate: an `opencode/`-prefixed User-Agent and
  * a valid `ses_` session header (or an explicit null suppression). Anything else is
- * replaced so third-party requests are not rejected with FreeTierError.
+ * replaced to preserve the earlier fork request convention.
  */
 function withCompatHeaders<TOptions extends StreamOptions>(
 	options: TOptions | undefined,

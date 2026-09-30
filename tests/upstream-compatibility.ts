@@ -44,6 +44,7 @@ const { loadExtensions } = await load(
 const temp = mkdtempSync(join(tmpdir(), "pi-upstream-compat-"));
 process.env.PI_CODING_AGENT_DIR = temp;
 process.env.PI_OFFLINE = "1";
+process.env.PI_OPENCODE_COMPAT = "1";
 process.on("exit", () => rmSync(temp, { recursive: true, force: true }));
 const model = {
 	id: "test",
@@ -511,5 +512,21 @@ test("valid caller headers, explicit suppressions, and sufficient tools remain i
 		wrapped.streamSimple(model as any, ctx, { headers, sessionId: "ignored" });
 		assert.equal(captured.context, ctx);
 		assert.deepEqual(captured.options.headers, headers);
+	}
+});
+
+test("compatibility is opt-in so upstream behavior is the default", async () => {
+	const previous = process.env.PI_OPENCODE_COMPAT;
+	delete process.env.PI_OPENCODE_COMPAT;
+	try {
+		const result = await loadExtensions(
+			[resolve("extensions/opencode-compat/index.ts")],
+			resolve("."),
+		);
+		assert.deepEqual(result.errors, []);
+		assert.equal(result.extensions[0].handlers.size, 0);
+		assert.equal(result.runtime.pendingNativeProviderRegistrations.length, 0);
+	} finally {
+		process.env.PI_OPENCODE_COMPAT = previous;
 	}
 });

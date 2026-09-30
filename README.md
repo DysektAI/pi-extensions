@@ -52,7 +52,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 - **`tokenrouter-provider`**: Dynamic provider for `api.tokenrouter.com` with automatic model capability detection. Reads `tokenrouter` from `auth.json` or `TOKENROUTER_API_KEY`.
 - **`synthetic`**: Synthetic provider (`api.synthetic.new`). Reads `synthetic` from `auth.json` or `SYNTHETIC_API_KEY`.
 - **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
-- **`opencode-compat`**: OpenCode Zen/Go request compatibility on upstream Pi 0.99.1+: session identifiers, client headers, and inert tool declarations for summaries and helper calls. Retains fork conventions without changing upstream adapters; live service acceptance can change independently.
+- **`opencode-compat`**: Opt-in OpenCode Zen/Go request compatibility on upstream Pi 0.99.1+: session identifiers, client headers, and inert tool declarations for summaries and helper calls. Enable with `PI_OPENCODE_COMPAT=1` only when stock requests fail. Retains fork conventions without changing upstream adapters; live service acceptance can change independently.
 - **`credential-pool`**: API key rotation framework (template in `pools.example.json`).
 
 ### Integrations & Skills
