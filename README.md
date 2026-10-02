@@ -51,6 +51,7 @@ pi remove git:github.com/DysektAI/pi-extensions
 ### Providers & Routing
 - **`tokenrouter-provider`**: Dynamic provider for `api.tokenrouter.com` with automatic model capability detection. Reads `tokenrouter` from `auth.json` or `TOKENROUTER_API_KEY`.
 - **`synthetic`**: Synthetic provider (`api.synthetic.new`). Reads `synthetic` from `auth.json` or `SYNTHETIC_API_KEY`.
+- **`morph-provider`**: Custom Morph adapter with live model discovery, cached and curated fallbacks, and tool-model compatibility. Reads `morph` from `auth.json` or `MORPH_API_KEY`; supports `MORPH_BASE_URL` and `MORPH_MODELS_TIMEOUT_MS`. Moved unchanged from AI Agent Kit; remove the old local `morph-provider.ts` copy to avoid duplicate registration.
 - **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
 - **`opencode-compat`**: Opt-in OpenCode Zen/Go request compatibility on upstream Pi 0.99.1+: session identifiers, client headers, and inert tool declarations for summaries and helper calls. Enable with `PI_OPENCODE_COMPAT=1` only when stock requests fail. Retains fork conventions without changing upstream adapters; live service acceptance can change independently.
 - **`credential-pool`**: API key rotation framework (template in `pools.example.json`).
