@@ -284,6 +284,15 @@ function fallbackModels(): CatalogModel[] {
 }
 
 function register(pi: ExtensionAPI, apiKey: string, models: CatalogModel[]): void {
+	const mapModels = (catalog: CatalogModel[]) => catalog.flatMap((model) => {
+		const mapped = toPiModel(model);
+		return mapped ? [mapped] : [];
+	});
+	let mapped = mapModels(models);
+	if (mapped.length === 0) {
+		mapped = mapModels(fallbackModels());
+		console.warn("[morph-provider] Catalog has no verified chat models; using the curated fallback models.");
+	}
 	pi.registerProvider("morph", {
 		name: "Morph",
 		baseUrl: BASE_URL,
@@ -293,10 +302,7 @@ function register(pi: ExtensionAPI, apiKey: string, models: CatalogModel[]): voi
 		api: "openai-completions",
 		authHeader: true,
 		headers: { "User-Agent": USER_AGENT },
-		models: models.flatMap((model) => {
-			const mapped = toPiModel(model);
-			return mapped ? [mapped] : [];
-		}),
+		models: mapped,
 	});
 }
 

@@ -22,7 +22,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/morph/tests.ts extensions/_shared/compaction-threshold.tests.ts extensions/_shared/discord-auth.tests.ts extensions/dysektlb/tests.ts extensions/agentrouter-replay/tests.ts",
+    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/morph/tests.ts extensions/_shared/compaction-threshold.tests.ts extensions/_shared/discord-auth.tests.ts extensions/dysektlb/tests.ts extensions/agentrouter-replay/tests.ts extensions/kit-status/tests.ts",
     "verify": "npm test",
     "test:upstream": "tsx --test tests/upstream-compatibility.ts"
   },

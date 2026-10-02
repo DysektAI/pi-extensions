@@ -15,12 +15,10 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { spawn } from "node:child_process";
+import { runKitStatusScript } from "./kit-status/runner.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-
-const KIT_STATUS_TIMEOUT_MS = 10_000;
 
 function kitStateDir(): string {
 	const override = process.env.AI_AGENT_KIT_STATE_DIR;
@@ -66,47 +64,10 @@ function resolveKitStatusScript(): string | undefined {
 const PYTHON_CANDIDATES: ReadonlyArray<readonly [string, ...string[]]> =
 	process.platform === "win32" ? [["py", "-3"], ["python"]] : [["python3"], ["python"]];
 
-/** Output of kit_status --notice ("" on failure or timeout), or undefined when the interpreter could not start. */
-function runWith(command: readonly [string, ...string[]], script: string): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		const [file, ...prefix] = command;
-		let child: ReturnType<typeof spawn>;
-		try {
-			child = spawn(file, [...prefix, script, "--notice"], { stdio: ["ignore", "pipe", "ignore"] });
-		} catch {
-			return resolve(undefined);
-		}
-		let out = "";
-		let settled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const finish = (value: string | undefined) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			resolve(value);
-		};
-		timer = setTimeout(() => {
-			child.kill();
-			finish("");
-		}, KIT_STATUS_TIMEOUT_MS);
-		child.stdout?.setEncoding("utf8");
-		child.stdout?.on("data", (chunk: string) => {
-			out += chunk;
-		});
-		// Spawn failure (e.g. ENOENT): undefined lets the caller try the next interpreter.
-		child.on("error", () => finish(undefined));
-		child.on("close", (code) => finish(code === 0 ? out.trim() : ""));
-	});
-}
-
 async function runKitStatus(): Promise<string> {
 	const script = resolveKitStatusScript();
 	if (!script) return "";
-	for (const command of PYTHON_CANDIDATES) {
-		const result = await runWith(command, script);
-		if (result !== undefined) return result;
-	}
-	return "";
+	return runKitStatusScript(script, PYTHON_CANDIDATES);
 }
 
 export default function (pi: ExtensionAPI) {

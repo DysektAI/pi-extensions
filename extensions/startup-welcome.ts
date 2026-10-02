@@ -429,9 +429,10 @@ export default function (pi: ExtensionAPI) {
           }
           const p = makePalette(theme);
           const data: PanelData = { ...resources, ...liveState };
-          cachedLines = expanded
+          cachedLines = (expanded
             ? renderExpanded(data, p, width)
-            : renderCollapsed(data, p, width);
+            : renderCollapsed(data, p, width)
+          ).map((line) => truncateToWidth(line, Math.max(0, width)));
           cachedWidth = width;
           cachedExpanded = expanded;
           cachedStateKey = stateKey;

@@ -124,6 +124,28 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 			assert.equal(registrations[0].config.models.length, 5);
 			assert.ok(registrations[0].config.models.every((m: any) => m.cost.input > 0));
 		});
+		for (const unsupported of [[{ id: "unknown-paid" }], [{ id: "morph-v3-fast" }, { id: "morph-compactor" }]]) {
+			await t.test("live unsupported-only catalog registers curated chat models", async () => {
+				registrations = [];
+				globalThis.fetch = async () => new Response(JSON.stringify({ data: unsupported }));
+				await run();
+				assert.equal(registrations[0].config.models.length, 5);
+				assert.ok(registrations[0].config.models.every((m: any) => m.cost.input > 0));
+			});
+			await t.test("cached unsupported-only catalog during outage registers curated models", async () => {
+				registrations = [];
+				globalThis.fetch = async () => { throw new TypeError("offline"); };
+				await run();
+				assert.equal(registrations[0].config.models.length, 5);
+				assert.ok(registrations[0].config.models.every((m: any) => m.cost.input > 0));
+			});
+			await t.test("rejected credentials cannot enable curated models with unsupported cache", async () => {
+				registrations = [];
+				globalThis.fetch = async () => new Response("denied", { status: 401 });
+				await run();
+				assert.deepEqual(registrations, []);
+			});
+		}
 		await t.test("no credentials skips discovery", async () => {
 			registrations = [];
 			delete process.env.MORPH_API_KEY;
