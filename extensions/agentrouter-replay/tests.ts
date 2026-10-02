@@ -18,7 +18,12 @@ test("replay hook affects only AgentRouter Responses requests", () => {
     let handler: any;
     extension({ on: (name: string, callback: unknown) => { assert.equal(name, "before_provider_request"); handler = callback; } } as any);
     const payload = { input: [{ id: "resource-id", call_id: "pair" }] };
-    assert.equal(handler({ payload }, { model: { provider: "other", baseUrl: "https://example.com/v1" } }), undefined);
+    for (const baseUrl of ["https://example.com/v1", "https://agentrouter.org.evil.example/v1", "https://evil.example/agentrouter.org", "https://agentrouter.org@evil.example", "invalid"]) {
+        assert.equal(handler({ payload }, { model: { provider: "other", baseUrl } }), undefined);
+    }
+    for (const baseUrl of ["https://agentrouter.org/v1", "https://api.agentrouter.org/v1"]) {
+        assert.deepEqual(handler({ payload }, { model: { provider: "other", baseUrl } }), { input: [{ call_id: "pair" }] });
+    }
     assert.equal(handler({ payload: { messages: [] } }, { model: { provider: "agentrouter" } }).messages.length, 0);
     assert.deepEqual(handler({ payload }, { model: { provider: "agentrouter" } }), { input: [{ call_id: "pair" }] });
 });

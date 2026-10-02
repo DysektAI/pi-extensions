@@ -32,7 +32,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isAgentRouterRequest(provider: string | undefined, baseUrl: string | undefined): boolean {
-	return provider === "agentrouter" || (baseUrl?.includes(AGENTROUTER_HOST) ?? false);
+	if (provider === "agentrouter") return true;
+	try {
+		const host = new URL(baseUrl ?? "").hostname;
+		return host === AGENTROUTER_HOST || host.endsWith(`.${AGENTROUTER_HOST}`);
+	} catch {
+		return false;
+	}
 }
 
 /** Drop `id` from every replayed output item while keeping all other fields. */
