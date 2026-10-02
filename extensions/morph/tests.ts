@@ -1,0 +1,104 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { extractModels, morphProvider, toPiModel } from "./provider.ts";
+
+const known = { id: "morph-kimik3" };
+
+test("catalog validation rejects malformed entries in live and cached shapes", () => {
+	for (const entries of [[null], [{ id: "" }], [{ id: "  " }], [{ id: 3 }], [known, null], [{ ...known, name: {} }]]) {
+		assert.deepEqual(extractModels(entries), []);
+		assert.deepEqual(extractModels({ data: entries }), []);
+	}
+	assert.deepEqual(extractModels([known]), [known]);
+	assert.deepEqual(extractModels({ data: [known] }), [known]);
+	assert.deepEqual(extractModels({ data: "bad" }), []);
+});
+
+test("only known chat models register, with priced usage and Kimi image input", () => {
+	for (const id of ["unknown-paid", "toString", "__proto__", "auto", "morph-v3-fast", "morph-v3-large", "morph-compactor", "morph-warp-grep-v2.1"]) {
+		assert.equal(toPiModel({ id }), undefined);
+	}
+	for (const id of ["morph-kimik3", "morph-kimik3-fast"]) {
+		const model = toPiModel({ id });
+		assert.deepEqual(model?.input, ["text", "image"]);
+		assert.ok(model!.cost.input > 0);
+		assert.ok(model!.cost.output > 0);
+		assert.equal(model?.compat.maxTokensField, "max_tokens");
+	}
+});
+
+// Real cache/auth files; only HTTP is mocked. No live credentials or requests.
+test("provider discovery, credential rejection and outage fallback", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "morph-test-"));
+	const cache = join(dir, ".cache", "morph-models.json");
+	const originalFetch = globalThis.fetch;
+	const originalWarn = console.warn;
+	const originalKey = process.env.MORPH_API_KEY;
+	let registrations: any[] = [];
+	const warnings: string[] = [];
+	const pi = { registerProvider: (name: string, config: unknown) => registrations.push({ name, config }) };
+	const run = () => morphProvider(pi as Parameters<typeof morphProvider>[0], dir);
+	console.warn = (message) => warnings.push(String(message));
+	process.env.MORPH_API_KEY = "test-env-key";
+	try {
+		await mkdir(join(dir, ".cache"));
+		await writeFile(join(dir, "auth.json"), JSON.stringify({ morph: { type: "api_key", key: "test-auth-key" } }));
+		await t.test("live catalog uses auth key and filters unknown and specialized models", async () => {
+			globalThis.fetch = async (_url, options) => {
+				assert.equal((options?.headers as Record<string, string>).Authorization, "Bearer test-auth-key");
+				return new Response(JSON.stringify({ data: [known, { id: "unknown-paid" }, { id: "morph-v3-fast" }] }));
+			};
+			await run();
+			assert.equal(registrations[0].name, "morph");
+			assert.equal(registrations[0].config.apiKey, "test-auth-key");
+			assert.deepEqual(registrations[0].config.models.map((m: any) => m.id), [known.id]);
+		});
+		for (const status of [401, 403]) {
+			await t.test(`HTTP ${status} does not register cached or curated models`, async () => {
+				registrations = [];
+				await writeFile(cache, JSON.stringify([known]));
+				globalThis.fetch = async () => new Response("rejected", { status });
+				await run();
+				assert.deepEqual(registrations, []);
+				assert.match(warnings.at(-1)!, /Authentication failed/);
+			});
+		}
+		await t.test("outage uses validated cache", async () => {
+			registrations = [];
+			globalThis.fetch = async () => { throw new TypeError("offline"); };
+			await run();
+			assert.deepEqual(registrations[0].config.models.map((m: any) => m.id), [known.id]);
+		});
+		await t.test("malformed live payload does not overwrite valid cache", async () => {
+			registrations = [];
+			globalThis.fetch = async () => new Response(JSON.stringify({ data: [null] }));
+			await run();
+			assert.deepEqual(JSON.parse(await readFile(cache, "utf8")), [known]);
+			assert.equal(registrations[0].config.models[0].id, known.id);
+		});
+		await t.test("malformed live and cached catalogs use curated fallback", async () => {
+			registrations = [];
+			await writeFile(cache, "[null]");
+			await run();
+			assert.equal(registrations[0].config.models.length, 5);
+			assert.ok(registrations[0].config.models.every((m: any) => m.cost.input > 0));
+		});
+		await t.test("no credentials skips discovery", async () => {
+			registrations = [];
+			delete process.env.MORPH_API_KEY;
+			await rm(join(dir, "auth.json"));
+			globalThis.fetch = async () => { assert.fail("discovery must not run"); };
+			await run();
+			assert.deepEqual(registrations, []);
+		});
+	} finally {
+		globalThis.fetch = originalFetch;
+		console.warn = originalWarn;
+		if (originalKey === undefined) delete process.env.MORPH_API_KEY;
+		else process.env.MORPH_API_KEY = originalKey;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
