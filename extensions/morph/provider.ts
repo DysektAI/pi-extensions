@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { constants } from "node:fs";
 import { mkdir, open, readFile } from "fs/promises";
 import { dirname, join } from "path";
 
@@ -205,11 +206,15 @@ async function fetchModels(apiKey: string): Promise<CatalogModel[]> {
 async function writeCache(models: CatalogModel[], path: string): Promise<void> {
 	try {
 		await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-		// Opening in append mode preserves old contents until permissions are private.
-		// chmod also tightens caches created by earlier extension versions.
-		const file = await open(path, "a", 0o600);
+		// Preserve contents until permissions are private; do not use append mode,
+		// whose Windows handle lacks the FILE_WRITE_DATA access needed to truncate.
+		const file = await open(path, constants.O_WRONLY | constants.O_CREAT, 0o600);
 		try {
-			await file.chmod(0o600);
+			// Windows chmod only changes read-only attributes, not ACL privacy,
+			// and libuv fchmod can fail reopening an already writable handle.
+			// Windows relies on the per-user agent directory ACL; POSIX must chmod
+			// successfully before any sensitive catalog contents are written.
+			if (process.platform !== "win32") await file.chmod(0o600);
 			await file.truncate(0);
 			await file.writeFile(JSON.stringify(models), "utf8");
 		} finally {

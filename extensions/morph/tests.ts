@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -72,6 +72,27 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 			await run();
 			assert.deepEqual(JSON.parse(await readFile(cache, "utf8")), [known]);
 			if (process.platform !== "win32") assert.equal((await stat(cache)).mode & 0o777, 0o600);
+		});
+		await t.test("Windows cache branch creates and replaces content without POSIX chmod", async (windowsTest) => {
+			const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+			const probe = await open(cache, "r");
+			const handlePrototype = Object.getPrototypeOf(probe);
+			await probe.close();
+			const chmodMock = windowsTest.mock.method(handlePrototype, "chmod", async () => {
+				throw Object.assign(new Error("Windows writable-handle reopen fails"), { code: "EBUSY" });
+			});
+			try {
+				Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+				await rm(cache);
+				await run();
+				assert.deepEqual(JSON.parse(await readFile(cache, "utf8")), [known]);
+				await writeFile(cache, JSON.stringify([{ id: "old-model-with-longer-content" }]));
+				await run();
+				assert.deepEqual(JSON.parse(await readFile(cache, "utf8")), [known]);
+			} finally {
+				Object.defineProperty(process, "platform", platform);
+				chmodMock.mock.restore();
+			}
 		});
 		for (const status of [401, 403]) {
 			await t.test(`HTTP ${status} does not register cached or curated models`, async () => {
