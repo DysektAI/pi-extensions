@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -44,7 +44,6 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 	console.warn = (message) => warnings.push(String(message));
 	process.env.MORPH_API_KEY = "test-env-key";
 	try {
-		await mkdir(join(dir, ".cache"));
 		await writeFile(join(dir, "auth.json"), JSON.stringify({ morph: { type: "api_key", key: "test-auth-key" } }));
 		await t.test("live catalog uses auth key and filters unknown and specialized models", async () => {
 			globalThis.fetch = async (_url, options) => {
@@ -55,6 +54,24 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 			assert.equal(registrations[0].name, "morph");
 			assert.equal(registrations[0].config.apiKey, "test-auth-key");
 			assert.deepEqual(registrations[0].config.models.map((m: any) => m.id), [known.id]);
+		});
+		await t.test("fresh cache and directory are private without changing catalog contents", async () => {
+			assert.deepEqual(JSON.parse(await readFile(cache, "utf8")), [known, { id: "unknown-paid" }, { id: "morph-v3-fast" }]);
+			if (process.platform !== "win32") {
+				assert.equal((await stat(cache)).mode & 0o777, 0o600);
+				assert.equal((await stat(join(dir, ".cache"))).mode & 0o777, 0o700);
+			}
+		});
+		await t.test("existing readable cache is tightened and refreshed", async () => {
+			await writeFile(cache, JSON.stringify([{ id: "old-model" }]));
+			if (process.platform !== "win32") {
+				await chmod(cache, 0o644);
+				assert.equal((await stat(cache)).mode & 0o777, 0o644);
+			}
+			globalThis.fetch = async () => new Response(JSON.stringify({ data: [known] }));
+			await run();
+			assert.deepEqual(JSON.parse(await readFile(cache, "utf8")), [known]);
+			if (process.platform !== "win32") assert.equal((await stat(cache)).mode & 0o777, 0o600);
 		});
 		for (const status of [401, 403]) {
 			await t.test(`HTTP ${status} does not register cached or curated models`, async () => {

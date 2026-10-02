@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, open, readFile } from "fs/promises";
 import { dirname, join } from "path";
 
 /**
@@ -204,8 +204,17 @@ async function fetchModels(apiKey: string): Promise<CatalogModel[]> {
 /** Best-effort cache write; never throws (a cache failure must not break pi). */
 async function writeCache(models: CatalogModel[], path: string): Promise<void> {
 	try {
-		await mkdir(dirname(path), { recursive: true });
-		await writeFile(path, JSON.stringify(models), "utf8");
+		await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+		// Opening in append mode preserves old contents until permissions are private.
+		// chmod also tightens caches created by earlier extension versions.
+		const file = await open(path, "a", 0o600);
+		try {
+			await file.chmod(0o600);
+			await file.truncate(0);
+			await file.writeFile(JSON.stringify(models), "utf8");
+		} finally {
+			await file.close();
+		}
 	} catch {
 		/* cache is best-effort */
 	}
