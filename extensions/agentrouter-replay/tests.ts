@@ -27,3 +27,12 @@ test("replay hook affects only AgentRouter Responses requests", () => {
     assert.equal(handler({ payload: { messages: [] } }, { model: { provider: "agentrouter" } }).messages.length, 0);
     assert.deepEqual(handler({ payload }, { model: { provider: "agentrouter" } }), { input: [{ call_id: "pair" }] });
 });
+
+
+test("explicit item references retain their required ID alongside replayed output", () => {
+    const reference = { type: "item_reference", id: "required-reference" };
+    const payload = { input: [reference, { type: "reasoning", id: "stored-id", encrypted_content: "reasoning" }] };
+    assert.deepEqual(stripStoredItemIds(payload), { input: [reference, { type: "reasoning", encrypted_content: "reasoning" }] });
+    const onlyReference = { input: [reference] };
+    assert.equal(stripStoredItemIds(onlyReference), onlyReference);
+});

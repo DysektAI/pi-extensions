@@ -28,6 +28,10 @@ pi update git:github.com/DysektAI/pi-extensions
 pi remove git:github.com/DysektAI/pi-extensions
 ```
 
+For `startup-welcome`, set `"quietStartup": true` in `~/.pi/agent/settings.json`
+to suppress Pi's native resource listing and avoid duplicate startup resources.
+AI Agent Kit already sets this; standalone installations need this setting.
+
 ## Extensions
 
 ### UX & Interface

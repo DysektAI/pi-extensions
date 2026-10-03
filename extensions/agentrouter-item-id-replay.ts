@@ -41,13 +41,13 @@ function isAgentRouterRequest(provider: string | undefined, baseUrl: string | un
 	}
 }
 
-/** Drop `id` from every replayed output item while keeping all other fields. */
+/** Drop stored output IDs while preserving explicit item references and other fields. */
 export function stripStoredItemIds(payload: unknown): unknown {
 	if (!isRecord(payload) || !Array.isArray(payload.input)) return payload;
 
 	let changed = false;
 	const input = payload.input.map((item) => {
-		if (!isRecord(item) || !("id" in item)) return item;
+		if (!isRecord(item) || item.type === "item_reference" || !("id" in item)) return item;
 		const { id: _storedItemId, ...rest } = item;
 		changed = true;
 		return rest;

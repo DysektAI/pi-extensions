@@ -43,6 +43,48 @@ test("existing prices and capabilities survive conversion", () => {
 	assert.equal(converted.thinkingLevelMap?.max, "max");
 });
 
+test("pricing units follow the selected key rather than the numeric magnitude", () => {
+	for (const rate of [0.001, 0.1, 2]) {
+		const perToken = toPiModel({ id: "priced", pricing: { inputCostPerToken: rate, outputCostPerToken: String(rate) } });
+		assert.equal(perToken.cost.input, rate * 1000000);
+		assert.equal(perToken.cost.output, rate * 1000000);
+	}
+	const perMillion = toPiModel({ id: "cheap", pricing: {
+		inputCostPerMillion: 0.0005, output_cost_per_million: "0.0007", cacheReadCostPerMillion: 0.0002,
+		cache_write_cost_per_million: 0.0003,
+	} });
+	assert.deepEqual(perMillion.cost, { input: 0.0005, output: 0.0007, cacheRead: 0.0002, cacheWrite: 0.0003 });
+	const priority = toPiModel({ id: "priority", pricing: { input: 0, inputCostPerToken: 1, output: "invalid", outputCostPerToken: 0.001 } });
+	assert.equal(priority.cost.input, 0);
+	assert.equal(priority.cost.output, 1000);
+});
+
+test("backend Kiro metadata reference pricing maps all per-million rates", () => {
+	const backendPricing = { input_per_1m: 5, output_per_1m: 25, cached_input_per_1m: 0.5,
+		cache_write_per_1m: 6.25, currency: "USD", source: "Anthropic public reference rates" };
+	const catalog = extractModels({ data: [{ id: "claude-opus-4.8", owned_by: "dysekt-lb",
+		metadata: { pricing: backendPricing } }] });
+	assert.equal(catalog.length, 1);
+	assert.deepEqual(toPiModel(catalog[0]).cost, { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 });
+	const priority = toPiModel({ id: "pricing-priority", pricing: { ...backendPricing, input: 0, output: 3, cacheRead: 0.2, cacheWrite: 0.3 } });
+	assert.deepEqual(priority.cost, { input: 0, output: 3, cacheRead: 0.2, cacheWrite: 0.3 });
+});
+
+test("advertised levels and model overrides enable reasoning when boolean flags are absent", () => {
+	const advertised = toPiModel({ id: "kiro/example", metadata: { supported_reasoning_levels: [{ effort: "high" }] } });
+	assert.equal(advertised.reasoning, true);
+	assert.equal(advertised.thinkingLevelMap?.high, "high");
+	for (const id of ["deepseek/deepseek-v4.1-flash", "fw/ds-v4.1-flash", "zoyi/gpt-6-sol"]) {
+		assert.equal(toPiModel({ id }).reasoning, true);
+		assert.equal(toPiModel({ id }).thinkingLevelMap?.max, "max");
+	}
+	for (const flags of [{ supports_reasoning: false }, { supportsReasoning: false }, { capabilities: { supports_reasoning: false }, supports_reasoning: true }]) {
+		assert.equal(toPiModel({ id: "deepseek/deepseek-v4.1-flash", ...flags }).reasoning, false);
+	}
+	assert.equal(toPiModel({ id: "plain" }).reasoning, false);
+	assert.equal(toPiModel({ id: "plain", supports_reasoning: true }).reasoning, true);
+});
+
 test("malformed catalog entries cannot reach model conversion", () => {
 	for (const invalid of [null, {}, { id: " " }, { id: 4 }, { id: "a", metadata: { input_modalities: {} } },
 		{ id: "a", metadata: { supported_reasoning_levels: [null] } }, { id: "a", capabilities: { input_modalities: "image" } }]) {
@@ -175,8 +217,10 @@ test("URL configuration and provider lifecycle use real files and mocked HTTP", 
 			configs = [];
 			await rm(join(dir, "auth.json"));
 			delete process.env.DYSEKTLB_API_KEY;
-			globalThis.fetch = async () => { assert.fail("must not fetch without credentials"); };
+			let fetchCalls = 0;
+			globalThis.fetch = async () => { fetchCalls++; return new Response(JSON.stringify({ data: [model] })); };
 			await run();
+			assert.equal(fetchCalls, 0);
 			assert.deepEqual(configs, []);
 		});
 	} finally {

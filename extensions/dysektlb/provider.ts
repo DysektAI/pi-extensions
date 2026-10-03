@@ -105,9 +105,11 @@ function num(...values: unknown[]): number | undefined {
 }
 
 function pricePerMillion(pricing: Pricing | null | undefined, ...keys: string[]): number {
-	const raw = num(...keys.map((key) => pricing?.[key]));
-	if (raw === undefined) return 0;
-	return raw < 0.001 ? raw * 1_000_000 : raw;
+	for (const key of keys) {
+		const raw = num(pricing?.[key]);
+		if (raw !== undefined) return key.endsWith("PerToken") ? raw * 1_000_000 : raw;
+	}
+	return 0;
 }
 
 function titleize(id: string): string {
@@ -179,13 +181,14 @@ export function toPiModel(model: DysektLBModel) {
 		model.supports_vision === true ||
 		model.supportsVision === true;
 	const pricing = model.metadata?.pricing ?? model.pricing;
+	const levels = thinkingLevelMap(model);
 
 	return {
 		id: model.id,
 		api: usesResponsesApi(model) ? ("openai-responses" as const) : ("openai-completions" as const),
 		name: `${model.metadata?.display_name ?? model.name ?? titleize(model.id)} (DysektLB)`,
-		reasoning: Boolean(model.capabilities?.supports_reasoning ?? model.supports_reasoning ?? model.supportsReasoning),
-		thinkingLevelMap: thinkingLevelMap(model),
+		reasoning: Boolean(model.capabilities?.supports_reasoning ?? model.supports_reasoning ?? model.supportsReasoning ?? levels),
+		thinkingLevelMap: levels,
 		input: supportsImages ? (["text", "image"] as const) : (["text"] as const),
 		contextWindow: num(
 			model.metadata?.context_window,
@@ -209,6 +212,7 @@ export function toPiModel(model: DysektLBModel) {
 				"input_cost_per_million",
 				"inputCostPerMillion",
 				"inputCostPerToken",
+				"input_per_1m",
 			),
 			output: pricePerMillion(
 				pricing,
@@ -217,6 +221,7 @@ export function toPiModel(model: DysektLBModel) {
 				"output_cost_per_million",
 				"outputCostPerMillion",
 				"outputCostPerToken",
+				"output_per_1m",
 			),
 			cacheRead: pricePerMillion(
 				pricing,
@@ -224,6 +229,7 @@ export function toPiModel(model: DysektLBModel) {
 				"cacheRead",
 				"cache_read_cost_per_million",
 				"cacheReadCostPerMillion",
+				"cached_input_per_1m",
 			),
 			cacheWrite: pricePerMillion(
 				pricing,
@@ -231,6 +237,7 @@ export function toPiModel(model: DysektLBModel) {
 				"cacheWrite",
 				"cache_write_cost_per_million",
 				"cacheWriteCostPerMillion",
+				"cache_write_per_1m",
 			),
 		},
 		compat: usesResponsesApi(model)
