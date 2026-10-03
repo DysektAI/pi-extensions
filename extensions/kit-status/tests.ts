@@ -107,22 +107,36 @@ test("bounded shutdown releases handles when no close event arrives", async () =
 });
 
 test("actual SIGTERM-resistant child is reaped before timeout resolves", { skip: process.platform === "win32" }, async () => {
-	let child: ReturnType<typeof spawn> | undefined;
-	let closed = false;
-	let ready = false;
-	let signal: NodeJS.Signals | null = null;
-	const spawnProcess = ((file: string, args: string[], options: any) => {
-		child = spawn(file, args, options);
-		child.stdout?.on("data", (chunk) => { if (String(chunk).includes("ready")) ready = true; });
-		child.on("close", (_code, received) => { closed = true; signal = received; });
-		return child;
-	}) as typeof spawn;
-	try {
-		const result = await runWith([process.execPath], ["-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"], spawnProcess, 500, 30);
-		assert.equal(result, "");
-		assert.equal(ready, true);
-		assert.equal(closed, true);
-		assert.equal(signal, "SIGKILL");
-		assert.throws(() => process.kill(child!.pid!, 0), { code: "ESRCH" });
-	} finally { if (child && !closed) child.kill("SIGKILL"); }
+    const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"], { stdio: ["ignore", "pipe", "ignore"] });
+    let closed = false;
+    let signal: NodeJS.Signals | null = null;
+    child.on("close", (_code, received) => { closed = true; signal = received; });
+    try {
+        await new Promise<void>((resolve, reject) => {
+            let output = "";
+            const timer = setTimeout(() => finish(new Error("child did not become ready")), 10_000);
+            const onData = (chunk: Buffer) => {
+                output += String(chunk);
+                if (output.includes("ready")) finish();
+            };
+            const onError = (error: Error) => finish(error);
+            const onClose = () => finish(new Error("child exited before readiness"));
+            const finish = (error?: Error) => {
+                clearTimeout(timer);
+                child.stdout?.off("data", onData);
+                child.off("error", onError);
+                child.off("close", onClose);
+                if (error) reject(error); else resolve();
+            };
+            child.stdout?.on("data", onData);
+            child.on("error", onError);
+            child.on("close", onClose);
+        });
+        const spawnProcess = (() => child) as typeof spawn;
+        const result = await runWith([process.execPath], [], spawnProcess, 5, 30);
+        assert.equal(result, "");
+        assert.equal(closed, true);
+        assert.equal(signal, "SIGKILL");
+        assert.throws(() => process.kill(child.pid!, 0), { code: "ESRCH" });
+    } finally { if (!closed) child.kill("SIGKILL"); }
 });
