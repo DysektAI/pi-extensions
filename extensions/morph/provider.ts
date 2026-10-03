@@ -173,14 +173,18 @@ async function readApiKey(agentDir: string): Promise<string | undefined> {
 	return process.env.MORPH_API_KEY;
 }
 
-export function extractModels(payload: unknown): CatalogModel[] {
+function parseCatalog(payload: unknown): CatalogModel[] | undefined {
 	const entries = Array.isArray(payload) ? payload
 		: payload && typeof payload === "object" && "data" in payload && Array.isArray(payload.data)
-			? payload.data : [];
-	if (!entries.every((entry) => entry && typeof entry === "object" &&
+			? payload.data : undefined;
+	if (!entries || !entries.every((entry) => entry && typeof entry === "object" &&
 		typeof entry.id === "string" && entry.id.trim().length > 0 &&
-		(entry.name === undefined || typeof entry.name === "string"))) return [];
+		(entry.name === undefined || typeof entry.name === "string"))) return undefined;
 	return entries.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) }));
+}
+
+export function extractModels(payload: unknown): CatalogModel[] {
+	return parseCatalog(payload) ?? [];
 }
 
 class CatalogHttpError extends Error {
@@ -197,8 +201,8 @@ async function fetchModels(apiKey: string): Promise<CatalogModel[]> {
 	if (!response.ok) {
 		throw new CatalogHttpError(response.status);
 	}
-	const models = extractModels(await response.json());
-	if (models.length === 0) throw new Error("no models returned for this key");
+	const models = parseCatalog(await response.json());
+	if (!models) throw new Error("invalid model catalog returned for this key");
 	return models;
 }
 
@@ -225,12 +229,12 @@ async function writeCache(models: CatalogModel[], path: string): Promise<void> {
 	}
 }
 
-async function loadCache(path: string): Promise<CatalogModel[]> {
+async function loadCache(path: string): Promise<CatalogModel[] | undefined> {
 	try {
 		const content = await readFile(path, "utf8");
-		return extractModels(JSON.parse(content));
+		return parseCatalog(JSON.parse(content));
 	} catch {
-		return [];
+		return undefined;
 	}
 }
 
@@ -288,10 +292,10 @@ function register(pi: ExtensionAPI, apiKey: string, models: CatalogModel[]): voi
 		const mapped = toPiModel(model);
 		return mapped ? [mapped] : [];
 	});
-	let mapped = mapModels(models);
+	const mapped = mapModels(models);
 	if (mapped.length === 0) {
-		mapped = mapModels(fallbackModels());
-		console.warn("[morph-provider] Catalog has no verified chat models; using the curated fallback models.");
+		console.warn("[morph-provider] Catalog has no verified chat models; Morph models will not be listed.");
+		return;
 	}
 	pi.registerProvider("morph", {
 		name: "Morph",
@@ -327,7 +331,7 @@ export async function morphProvider(pi: ExtensionAPI, agentDir: string): Promise
 			return;
 		}
 		const cached = await loadCache(path);
-		if (cached.length > 0) {
+		if (cached !== undefined) {
 			register(pi, apiKey, cached);
 			console.warn(
 				`[morph-provider] Model fetch failed (${reason}); using ${cached.length} cached models from ${path}.`,

@@ -125,19 +125,17 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 			assert.ok(registrations[0].config.models.every((m: any) => m.cost.input > 0));
 		});
 		for (const unsupported of [[{ id: "unknown-paid" }], [{ id: "morph-v3-fast" }, { id: "morph-compactor" }]]) {
-			await t.test("live unsupported-only catalog registers curated chat models", async () => {
+			await t.test("live unsupported-only catalog does not advertise absent models", async () => {
 				registrations = [];
 				globalThis.fetch = async () => new Response(JSON.stringify({ data: unsupported }));
 				await run();
-				assert.equal(registrations[0].config.models.length, 5);
-				assert.ok(registrations[0].config.models.every((m: any) => m.cost.input > 0));
+				assert.deepEqual(registrations, []);
 			});
-			await t.test("cached unsupported-only catalog during outage registers curated models", async () => {
+			await t.test("cached unsupported-only catalog during outage does not advertise absent models", async () => {
 				registrations = [];
 				globalThis.fetch = async () => { throw new TypeError("offline"); };
 				await run();
-				assert.equal(registrations[0].config.models.length, 5);
-				assert.ok(registrations[0].config.models.every((m: any) => m.cost.input > 0));
+				assert.deepEqual(registrations, []);
 			});
 			await t.test("rejected credentials cannot enable curated models with unsupported cache", async () => {
 				registrations = [];
@@ -146,12 +144,33 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 				assert.deepEqual(registrations, []);
 			});
 		}
+		for (const payload of [[], { data: [] }]) {
+			await t.test("valid empty live and cached catalogs are authoritative", async () => {
+				registrations = [];
+				globalThis.fetch = async () => new Response(JSON.stringify(payload));
+				await run();
+				assert.deepEqual(registrations, []);
+				assert.deepEqual(JSON.parse(await readFile(cache, "utf8")), []);
+				globalThis.fetch = async () => { throw new TypeError("offline"); };
+				await run();
+				assert.deepEqual(registrations, []);
+			});
+		}
+		await t.test("malformed payload shape without a valid cache uses curated fallback", async () => {
+			registrations = [];
+			await rm(cache);
+			globalThis.fetch = async () => new Response(JSON.stringify({ data: "invalid" }));
+			await run();
+			assert.equal(registrations[0].config.models.length, 5);
+		});
 		await t.test("no credentials skips discovery", async () => {
 			registrations = [];
 			delete process.env.MORPH_API_KEY;
 			await rm(join(dir, "auth.json"));
-			globalThis.fetch = async () => { assert.fail("discovery must not run"); };
+			let calls = 0;
+			globalThis.fetch = async () => { calls++; return new Response("[]"); };
 			await run();
+			assert.equal(calls, 0);
 			assert.deepEqual(registrations, []);
 		});
 	} finally {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import type { spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
-import { runKitStatusScript } from "./runner.ts";
+import { runKitStatusScript, runWith } from "./runner.ts";
 
 const candidates = [["py", "-3"], ["python"]] as const;
 const script = "C:\\kit path\\shared\\scripts\\kit_status.py";
@@ -16,8 +16,8 @@ function mockProcesses(outcomes: Outcome[]) {
 		assert.ok(outcome, "unexpected extra interpreter/script launch");
 		if (outcome.throws) throw new Error("cannot spawn");
 		const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter & { setEncoding: () => void }; kill: () => void };
-		child.stdout = Object.assign(new EventEmitter(), { setEncoding() {} });
-		child.kill = () => { killed++; };
+		child.stdout = Object.assign(new EventEmitter(), { setEncoding() {}, destroy() {} });
+		child.kill = () => { killed++; queueMicrotask(() => child.emit("close", null)); };
 		queueMicrotask(() => {
 			if (outcome.timeout) return;
 			if (outcome.error) { child.emit("error", new Error("ENOENT")); child.emit("close", -1); return; }
@@ -59,7 +59,7 @@ test("Python 2 or Store stub does not qualify as an interpreter", async () => {
 	assert.ok(mock.calls.every((call) => call.args.includes("-c")));
 });
 
-test("probe timeout permits fallback; script timeout kills once and does not retry", async () => {
+test("probe timeout permits fallback; script timeout waits for close and does not retry", async () => {
 	const probe = mockProcesses([{ timeout: true }, { out: ["kit-python-ready"] }, { out: ["drift"] }]);
 	assert.equal(await runKitStatusScript(script, candidates, probe.spawnProcess, 5), "drift");
 	assert.equal(probe.killed(), 1);
@@ -67,4 +67,62 @@ test("probe timeout permits fallback; script timeout kills once and does not ret
 	assert.equal(await runKitStatusScript(script, candidates, scriptTimeout.spawnProcess, 5), "");
 	assert.equal(scriptTimeout.killed(), 1);
 	assert.equal(scriptTimeout.calls.length, 2);
+});
+
+
+test("timeout waits for close, escalates SIGKILL, and cleans stdout listeners", async () => {
+	const child = new EventEmitter() as any;
+	let destroyed = false;
+	child.stdout = Object.assign(new EventEmitter(), { setEncoding() {}, destroy() { destroyed = true; } });
+	const signals: string[] = [];
+	let closed = false;
+	child.kill = (signal: string) => {
+		signals.push(signal);
+		if (signal === "SIGKILL") setTimeout(() => { closed = true; child.emit("close", null); }, 5);
+		return true;
+	};
+	child.unref = () => assert.fail("closed process does not require unref");
+	const result = await runWith(["python"], [script], (() => child) as typeof spawn, 5, 10);
+	assert.equal(result, "");
+	assert.equal(closed, true);
+	assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+	assert.equal(destroyed, true);
+	assert.equal(child.stdout.listenerCount("data"), 0);
+	assert.equal(child.listenerCount("close"), 0);
+});
+
+test("bounded shutdown releases handles when no close event arrives", async () => {
+	const child = new EventEmitter() as any;
+	let destroyed = false;
+	let unreferenced = false;
+	child.stdout = Object.assign(new EventEmitter(), { setEncoding() {}, destroy() { destroyed = true; } });
+	const signals: string[] = [];
+	child.kill = (signal: string) => { signals.push(signal); return false; };
+	child.unref = () => { unreferenced = true; };
+	assert.equal(await runWith(["python"], [script], (() => child) as typeof spawn, 5, 5), "");
+	assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+	assert.equal(unreferenced, true);
+	assert.equal(destroyed, true);
+	assert.equal(child.stdout.listenerCount("data"), 0);
+});
+
+test("actual SIGTERM-resistant child is reaped before timeout resolves", { skip: process.platform === "win32" }, async () => {
+	let child: ReturnType<typeof spawn> | undefined;
+	let closed = false;
+	let ready = false;
+	let signal: NodeJS.Signals | null = null;
+	const spawnProcess = ((file: string, args: string[], options: any) => {
+		child = spawn(file, args, options);
+		child.stdout?.on("data", (chunk) => { if (String(chunk).includes("ready")) ready = true; });
+		child.on("close", (_code, received) => { closed = true; signal = received; });
+		return child;
+	}) as typeof spawn;
+	try {
+		const result = await runWith([process.execPath], ["-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"], spawnProcess, 500, 30);
+		assert.equal(result, "");
+		assert.equal(ready, true);
+		assert.equal(closed, true);
+		assert.equal(signal, "SIGKILL");
+		assert.throws(() => process.kill(child!.pid!, 0), { code: "ESRCH" });
+	} finally { if (child && !closed) child.kill("SIGKILL"); }
 });
