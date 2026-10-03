@@ -28,6 +28,10 @@ pi update git:github.com/DysektAI/pi-extensions
 pi remove git:github.com/DysektAI/pi-extensions
 ```
 
+For `startup-welcome`, set `"quietStartup": true` in `~/.pi/agent/settings.json`
+to suppress Pi's native resource listing and avoid duplicate startup resources.
+AI Agent Kit already sets this; standalone installations need this setting.
+
 ## Extensions
 
 ### UX & Interface
@@ -51,6 +55,12 @@ pi remove git:github.com/DysektAI/pi-extensions
 ### Providers & Routing
 - **`tokenrouter-provider`**: Dynamic provider for `api.tokenrouter.com` with automatic model capability detection. Reads `tokenrouter` from `auth.json` or `TOKENROUTER_API_KEY`.
 - **`synthetic`**: Synthetic provider (`api.synthetic.new`). Reads `synthetic` from `auth.json` or `SYNTHETIC_API_KEY`.
+- **`dysektlb-provider`**: Custom dynamic DysektLB gateway provider; reads `auth.json` or `DYSEKTLB_API_KEY` and respects `DYSEKTLB_BASE_URL` / `models.json`.
+- **`freemodel-provider`**: Custom direct GPT/Claude gateway adapter using `FREEMODEL_API_KEY` or the Pi credential store.
+- **`agentrouter-item-id-replay`**: Keeps portable call IDs and encrypted reasoning while removing resource-scoped replay IDs on AgentRouter Responses requests.
+- **`startup-welcome`**: Dysekt startup branding and resource summary.
+- **`kit-status`**: Optional AI Agent Kit drift notification adapter; uses its separately installed status script and stays quiet when the kit is absent.
+- **`morph-provider`**: Custom Morph adapter with live model discovery, cached and curated fallbacks, and verified chat models only (specialized and unknown IDs are excluded). Pricing is a documented snapshot; authentication failures skip registration. Reads `morph` from `auth.json` or `MORPH_API_KEY`; supports `MORPH_BASE_URL` and `MORPH_MODELS_TIMEOUT_MS`. Moved from AI Agent Kit; remove the old local `morph-provider.ts` copy to avoid duplicate registration.
 - **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
 - **`opencode-compat`**: Opt-in OpenCode Zen/Go request compatibility on upstream Pi 0.99.1+: session identifiers, client headers, and inert tool declarations for summaries and helper calls. Enable with `PI_OPENCODE_COMPAT=1` only when stock requests fail. Retains fork conventions without changing upstream adapters; live service acceptance can change independently.
 - **`credential-pool`**: API key rotation framework (template in `pools.example.json`).

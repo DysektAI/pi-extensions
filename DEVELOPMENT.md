@@ -4,8 +4,8 @@
 
 | Concern | Source |
 |---------|--------|
-| Public extensions in this package | **this repo** |
-| Your Pi profile (settings, models, brand provider) | agent kit / `~/.pi/agent` |
+| Pi providers, UI extensions, and kit-status adapter | **this repo** |
+| Your Pi profile (settings, models, prompts, themes) | agent kit / `~/.pi/agent` |
 | Personal/private extensions (e.g. workers, Orca) | keep only under `~/.pi/agent/extensions` or a private package |
 
 ## Safe local install
