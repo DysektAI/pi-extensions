@@ -85,6 +85,22 @@ test("advertised levels and model overrides enable reasoning when boolean flags 
 	assert.equal(toPiModel({ id: "plain", supports_reasoning: true }).reasoning, true);
 });
 
+test("zoyi GPT-6 override covers versioned ids and leaves look-alikes alone", () => {
+	for (const id of ["zoyi/gpt-6.1-sol", "zoyi/gpt-6-astra"]) {
+		const levels = toPiModel({ id }).thinkingLevelMap;
+		assert.equal(levels?.xhigh, "xhigh");
+		assert.equal(levels?.max, "max");
+		assert.equal(levels?.high, null);
+	}
+	const extended = toPiModel({ id: "zoyi/gpt-6.1-sol", metadata: { supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }] } });
+	assert.equal(extended.thinkingLevelMap?.low, "low");
+	assert.equal(extended.thinkingLevelMap?.medium, "medium");
+	assert.equal(extended.thinkingLevelMap?.max, "max");
+	for (const id of ["zoyi/gpt-64-sol", "zoyi/gpt-66-astra", "other/gpt-6-sol", "zoyi/gpt-6"]) {
+		assert.equal(toPiModel({ id }).thinkingLevelMap, undefined, id);
+	}
+});
+
 test("malformed catalog entries cannot reach model conversion", () => {
 	for (const invalid of [null, {}, { id: " " }, { id: 4 }, { id: "a", metadata: { input_modalities: {} } },
 		{ id: "a", metadata: { supported_reasoning_levels: [null] } }, { id: "a", capabilities: { input_modalities: "image" } }]) {
