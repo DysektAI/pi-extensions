@@ -199,7 +199,8 @@ function rollBack(files: Array<[string, string | undefined]>, settings: Array<[s
 /**
  * Apply an export as a snapshot: the portable keys become exactly what the
  * export carries (absent ones are cleared); everything else (keys, auth, other
- * settings) stays. Files and extension settings all change or none do.
+ * settings) stays; extension settings the export omits keep their value.
+ * Files and extension settings all change or none do.
  * Returns extension settings that are not registered here or have unknown values.
  */
 export function importPortableConfig(text: string): { skipped: string[] } {
