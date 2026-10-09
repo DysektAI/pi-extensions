@@ -80,6 +80,7 @@ AI Agent Kit already sets this; standalone installations need this setting.
 ### Configuration (`/config`)
 `extensions/config.ts` manages settings registered dynamically by other extensions via `registerConfigSetting` (`_shared/config-settings.ts`).
 Model roles (`recap`, `title`, `judge`) and ordered subagent fallback chains (`subagentModels`, `agentModels`) persist in `~/.pi/agent/model-roles.json`. Subagents resolve their model chain at spawn time, keeping agent markdown files clean of environment-specific model pins.
+`/config export` (or `alt+e`) copies those model choices plus `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`, `modelThinkingLevels` and registered settings as JSON; `/config import` on another machine (Windows ↔ WSL) pastes and applies it, then reloads. Only allowlisted keys travel, so API keys and auth never leave the machine.
 
 ### Context Management & `/clear-implement`
 `extensions/context-management.ts` hooks `turn_end` rather than waiting for Pi's fallback `agent_end` trigger:
