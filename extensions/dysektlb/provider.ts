@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { constants, readFileSync } from "node:fs";
 import { mkdir, open, readFile } from "fs/promises";
 import { dirname, join } from "path";
-import { type CacheFirstResult, nonEmpty, registerCacheFirst } from "../_shared/cache-first.ts";
+import { type CacheFirstResult, nonEmpty, registerCacheFirst, warnStaleCatalog } from "../_shared/cache-first.ts";
 
 /**
  * DysektLB provider for pi.
@@ -387,7 +387,7 @@ export async function dysektlbProvider(pi: ExtensionAPI, agentDir: string): Prom
 		register: (models) => register(pi, apiKey, models, baseUrl),
 		onColdFailure: (error) => warnColdFailure(error, baseUrl),
 		onRefreshFailure: (error) => {
-			if (!isAuthFailure(error)) return;
+			if (!isAuthFailure(error)) return warnStaleCatalog("dysektlb-provider", error);
 			pi.unregisterProvider("dysektlb");
 			warnColdFailure(error, baseUrl);
 		},

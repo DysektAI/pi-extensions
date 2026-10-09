@@ -103,7 +103,7 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 			}
 		});
 		for (const status of [401, 403]) {
-			await t.test(`HTTP ${status} withdraws cached models once the refresh is rejected`, async () => {
+			await t.test(`HTTP ${status} withdraws cached models once the refresh is rejected`, { timeout: 2000 }, async () => {
 				registrations = [];
 				await writeFile(cache, JSON.stringify([known]));
 				let release!: () => void;
@@ -131,6 +131,7 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 			globalThis.fetch = async () => { throw new TypeError("offline"); };
 			await run();
 			assert.deepEqual(registrations[0].config.models.map((m: any) => m.id), [known.id]);
+			assert.match(warnings.at(-1)!, /Catalog refresh failed \(offline\); keeping cached models/);
 		});
 		await t.test("malformed live payload does not overwrite valid cache", async () => {
 			registrations = [];

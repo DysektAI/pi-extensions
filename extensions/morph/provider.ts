@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { mkdir, open, readFile } from "fs/promises";
 import { dirname, join } from "path";
-import { type CacheFirstResult, registerCacheFirst } from "../_shared/cache-first.ts";
+import { type CacheFirstResult, registerCacheFirst, warnStaleCatalog } from "../_shared/cache-first.ts";
 
 /**
  * Morph (Morphllm) provider for pi — https://morphllm.com
@@ -349,7 +349,7 @@ export async function morphProvider(pi: ExtensionAPI, agentDir: string): Promise
 		register: (models) => register(pi, apiKey, models),
 		onColdFailure: (error) => registerColdFallback(pi, apiKey, error),
 		onRefreshFailure: (error) => {
-			if (!isAuthFailure(error)) return;
+			if (!isAuthFailure(error)) return warnStaleCatalog("morph-provider", error);
 			pi.unregisterProvider("morph");
 			warnAuthFailure(error);
 		},

@@ -210,7 +210,7 @@ test("URL configuration and provider lifecycle use real files and mocked HTTP", 
 			} finally { Object.defineProperty(process, "platform", platform); mock.mock.restore(); }
 		});
 		for (const status of [401, 403]) {
-			await t.test(`HTTP ${status} withdraws cached models once the refresh is rejected`, async () => {
+			await t.test(`HTTP ${status} withdraws cached models once the refresh is rejected`, { timeout: 2000 }, async () => {
 				configs = [];
 				let release!: () => void;
 				const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -235,6 +235,7 @@ test("URL configuration and provider lifecycle use real files and mocked HTTP", 
 			globalThis.fetch = async () => { throw new TypeError("offline"); };
 			await run();
 			assert.equal(configs[0].models[0].id, model.id);
+				assert.match(warnings.at(-1)!, /Catalog refresh failed \(offline\); keeping cached models/);
 		});
 		await t.test("malformed cache during outage skips registration", async () => {
 			configs = [];

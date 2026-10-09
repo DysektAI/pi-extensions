@@ -35,7 +35,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 
-import { type CacheFirstResult, nonEmpty, registerCacheFirst } from "./_shared/cache-first.ts";
+import { type CacheFirstResult, nonEmpty, registerCacheFirst, warnStaleCatalog } from "./_shared/cache-first.ts";
 import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from "./tokenrouter/pure.ts";
 
 const BASE_URL = "https://api.tokenrouter.com/v1";
@@ -133,7 +133,7 @@ export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<Cac
 			);
 		},
 		onRefreshFailure: (error) => {
-			if (!isAuthFailure(error)) return;
+			if (!isAuthFailure(error)) return warnStaleCatalog("tokenrouter-provider", error);
 			pi.unregisterProvider("tokenrouter");
 			console.warn(`[tokenrouter-provider] Authentication failed (${(error as Error).message}). TokenRouter models will not be listed.`);
 		},

@@ -25,6 +25,12 @@ export interface CacheFirstResult {
 
 export const nonEmpty = <T>(models: T[]): T[] | undefined => (models.length > 0 ? models : undefined);
 
+/** Non-auth refresh failure: the cached catalog stays, but say it may be stale. */
+export function warnStaleCatalog(tag: string, error: unknown): void {
+	const reason = error instanceof Error ? error.message : String(error);
+	console.warn(`[${tag}] Catalog refresh failed (${reason}); keeping cached models.`);
+}
+
 export async function registerCacheFirst<T>(catalog: CacheFirstCatalog<T>): Promise<CacheFirstResult> {
 	const cached = await catalog.loadCache();
 	if (cached !== undefined) {

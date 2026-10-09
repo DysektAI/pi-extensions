@@ -457,8 +457,8 @@ describe("toPiModel", () => {
 describe("tokenrouter provider refresh", () => {
 	const model = { id: "deepseek/deepseek-v4.1-flash", supported_endpoint_types: ["openai"] };
 
-	for (const status of [401, 403]) {
-		it(`HTTP ${status} withdraws the cached catalog and warns`, async () => {
+	for (const status of [401, 403, 500]) {
+		it(`HTTP ${status} on refresh ${status === 500 ? "keeps" : "withdraws"} the cached catalog and warns`, async () => {
 			const dir = await mkdtemp(join(tmpdir(), "tokenrouter-test-"));
 			const env = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, TOKENROUTER_API_KEY: process.env.TOKENROUTER_API_KEY };
 			const originalFetch = globalThis.fetch;
@@ -477,8 +477,13 @@ describe("tokenrouter provider refresh", () => {
 				await writeFile(join(dir, ".cache", "tokenrouter-models.json"), JSON.stringify([model]));
 				const { refresh } = await tokenrouterProvider(pi as any);
 				await refresh;
-				assert.deepEqual(registered, []);
-				assert.match(warnings.at(-1) ?? "", /Authentication failed/);
+				if (status === 500) {
+					assert.deepEqual(registered, ["tokenrouter"]);
+					assert.match(warnings.at(-1) ?? "", /Catalog refresh failed \(HTTP 500\); keeping cached models/);
+				} else {
+					assert.deepEqual(registered, []);
+					assert.match(warnings.at(-1) ?? "", /Authentication failed/);
+				}
 			} finally {
 				globalThis.fetch = originalFetch;
 				console.warn = originalWarn;
