@@ -18,9 +18,9 @@
  *
  * When neither is set, the provider is skipped entirely.
  *
- * Resilience: never throws. A failed fetch falls back to the last-known model
- * list cached on disk, so models still appear when TokenRouter is briefly
- * unreachable. The cache is written with 0600 because a catalog fetch requires
+ * Resilience: never throws. The last-known model list cached on disk registers
+ * immediately and a background fetch replaces it (see _shared/cache-first.ts),
+ * so startup never waits on TokenRouter once a cache exists. The cache is written with 0600 because a catalog fetch requires
  * sending the API key and catalog contents can be sensitive.
  *
  * Model metadata (reasoning support, image input, context window, thinking
@@ -35,6 +35,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 
+import { type CacheFirstResult, nonEmpty, registerCacheFirst, warnStaleCatalog } from "./_shared/cache-first.ts";
 import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from "./tokenrouter/pure.ts";
 
 const BASE_URL = "https://api.tokenrouter.com/v1";
@@ -69,7 +70,7 @@ async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {
 	});
 	if (!response.ok) {
 		const hint = response.status === 401 ? "; update the tokenrouter entry in ~/.pi/agent/auth.json" : "";
-		throw new Error(`HTTP ${response.status}${hint}`);
+		throw Object.assign(new Error(`HTTP ${response.status}${hint}`), { status: response.status });
 	}
 	const models = extractModels(await response.json()).filter(isServableModel);
 	if (models.length === 0) throw new Error("no servable models returned for this key");
@@ -109,31 +110,32 @@ function register(pi: ExtensionAPI, apiKey: string, models: TokenRouterModel[]):
 	});
 }
 
-export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<void> {
+const isAuthFailure = (error: unknown): boolean => [401, 403].includes((error as { status?: number }).status ?? 0);
+
+export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<CacheFirstResult> {
 	const apiKey = await readApiKey();
 	if (!apiKey) {
 		console.warn(
 			"[tokenrouter-provider] No API key found — set TOKENROUTER_API_KEY or add a `tokenrouter` entry to ~/.pi/agent/auth.json. TokenRouter models will not be listed.",
 		);
-		return;
+		return {};
 	}
 
-	try {
-		const models = await fetchModels(apiKey);
-		await writeCache(models);
-		register(pi, apiKey, models);
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		const cached = await loadCache();
-		if (cached.length > 0) {
-			register(pi, apiKey, cached);
-			console.warn(
-				`[tokenrouter-provider] Model fetch failed (${reason}); using ${cached.length} cached models from ${cachePath()}.`,
-			);
-		} else {
+	return registerCacheFirst({
+		loadCache: async () => nonEmpty(await loadCache()),
+		fetchFresh: () => fetchModels(apiKey),
+		saveCache: writeCache,
+		register: (models) => register(pi, apiKey, models),
+		onColdFailure: (error) => {
+			const reason = error instanceof Error ? error.message : String(error);
 			console.warn(
 				`[tokenrouter-provider] Model fetch failed (${reason}) and no cache is available. Check the base URL (${BASE_URL}) and that the key is valid.`,
 			);
-		}
-	}
+		},
+		onRefreshFailure: (error) => {
+			if (!isAuthFailure(error)) return warnStaleCatalog("tokenrouter-provider", error);
+			pi.unregisterProvider("tokenrouter");
+			console.warn(`[tokenrouter-provider] Authentication failed (${(error as Error).message}). TokenRouter models will not be listed.`);
+		},
+	});
 }

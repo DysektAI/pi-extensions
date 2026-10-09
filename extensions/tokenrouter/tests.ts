@@ -29,6 +29,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import tokenrouterProvider from "../tokenrouter-provider.ts";
 
 import {
 	DEFAULT_CONTEXT_WINDOW,
@@ -446,4 +451,48 @@ describe("toPiModel", () => {
 		assert.equal(model.reasoning, true);
 		assert.deepEqual(model.input, ["text"]);
 	});
+});
+
+// Real cache files under a temp HOME; only HTTP is mocked.
+describe("tokenrouter provider refresh", () => {
+	const model = { id: "deepseek/deepseek-v4.1-flash", supported_endpoint_types: ["openai"] };
+
+	for (const status of [401, 403, 500]) {
+		it(`HTTP ${status} on refresh ${status === 500 ? "keeps" : "withdraws"} the cached catalog and warns`, async () => {
+			const dir = await mkdtemp(join(tmpdir(), "tokenrouter-test-"));
+			const env = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, TOKENROUTER_API_KEY: process.env.TOKENROUTER_API_KEY };
+			const originalFetch = globalThis.fetch;
+			const originalWarn = console.warn;
+			const warnings: string[] = [];
+			let registered: string[] = [];
+			const pi = {
+				registerProvider: (name: string) => { registered.push(name); },
+				unregisterProvider: (name: string) => { registered = registered.filter((n) => n !== name); },
+			};
+			Object.assign(process.env, { HOME: dir, PI_CODING_AGENT_DIR: dir, TOKENROUTER_API_KEY: "test-key" });
+			console.warn = (message) => warnings.push(String(message));
+			globalThis.fetch = async () => new Response("rejected", { status });
+			try {
+				await mkdir(join(dir, ".cache"), { recursive: true });
+				await writeFile(join(dir, ".cache", "tokenrouter-models.json"), JSON.stringify([model]));
+				const { refresh } = await tokenrouterProvider(pi as any);
+				await refresh;
+				if (status === 500) {
+					assert.deepEqual(registered, ["tokenrouter"]);
+					assert.match(warnings.at(-1) ?? "", /Catalog refresh failed \(HTTP 500\); keeping cached models/);
+				} else {
+					assert.deepEqual(registered, []);
+					assert.match(warnings.at(-1) ?? "", /Authentication failed/);
+				}
+			} finally {
+				globalThis.fetch = originalFetch;
+				console.warn = originalWarn;
+				for (const [key, value] of Object.entries(env)) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+				await rm(dir, { recursive: true, force: true });
+			}
+		});
+	}
 });

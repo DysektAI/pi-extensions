@@ -120,8 +120,16 @@ test("URL configuration and provider lifecycle use real files and mocked HTTP", 
 	const originalFetch = globalThis.fetch;
 	const warnings: string[] = [];
 	let configs: any[] = [];
-	const pi = { registerProvider(name: string, config: unknown) { assert.equal(name, "dysektlb"); configs.push(config); } };
-	const run = () => dysektlbProvider(pi as Parameters<typeof dysektlbProvider>[0], dir);
+	const pi = {
+		registerProvider(name: string, config: unknown) { assert.equal(name, "dysektlb"); configs.push(config); },
+		unregisterProvider(name: string) { assert.equal(name, "dysektlb"); configs = []; },
+	};
+	const start = () => dysektlbProvider(pi as Parameters<typeof dysektlbProvider>[0], dir);
+	const run = async () => {
+		const result = await start();
+		await result.refresh;
+		return result;
+	};
 	console.warn = (value) => warnings.push(String(value));
 	delete process.env.DYSEKTLB_BASE_URL;
 	process.env.DYSEKTLB_API_KEY = "test-env-key";
@@ -202,10 +210,15 @@ test("URL configuration and provider lifecycle use real files and mocked HTTP", 
 			} finally { Object.defineProperty(process, "platform", platform); mock.mock.restore(); }
 		});
 		for (const status of [401, 403]) {
-			await t.test(`HTTP ${status} does not use cached models`, async () => {
+			await t.test(`HTTP ${status} withdraws cached models once the refresh is rejected`, { timeout: 2000 }, async () => {
 				configs = [];
-				globalThis.fetch = async () => new Response("denied", { status });
-				await run();
+				let release!: () => void;
+				const gate = new Promise<void>((resolve) => { release = resolve; });
+				globalThis.fetch = async () => { await gate; return new Response("denied", { status }); };
+				const { refresh } = await start();
+				assert.equal(configs.length, 1, "the cached catalog registers without waiting for the network");
+				release();
+				await refresh;
 				assert.deepEqual(configs, []);
 				assert.match(warnings.at(-1)!, /Authentication failed/);
 			});
@@ -222,6 +235,7 @@ test("URL configuration and provider lifecycle use real files and mocked HTTP", 
 			globalThis.fetch = async () => { throw new TypeError("offline"); };
 			await run();
 			assert.equal(configs[0].models[0].id, model.id);
+				assert.match(warnings.at(-1)!, /Catalog refresh failed \(offline\); keeping cached models/);
 		});
 		await t.test("malformed cache during outage skips registration", async () => {
 			configs = [];

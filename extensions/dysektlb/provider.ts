@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { constants, readFileSync } from "node:fs";
 import { mkdir, open, readFile } from "fs/promises";
 import { dirname, join } from "path";
+import { type CacheFirstResult, nonEmpty, registerCacheFirst, warnStaleCatalog } from "../_shared/cache-first.ts";
 
 /**
  * DysektLB provider for pi.
@@ -23,8 +24,9 @@ import { dirname, join } from "path";
  * then `$DYSEKTLB_API_KEY`.
  *
  * Resilience:
- * - Authentication failures skip registration. Other failed fetches fall back to the last-known model list cached
- *   on disk, so models still appear when DysektLB is briefly unreachable.
+ * - The last-known model list cached on disk registers immediately and a
+ *   background fetch replaces it (see _shared/cache-first.ts); only a cold
+ *   cache waits for the network. A rejected key withdraws the provider.
  * - Missing key / failed fetch emit a one-line warning so the operator knows
  *   what to fix instead of silently showing no models.
  */
@@ -353,7 +355,21 @@ function register(pi: ExtensionAPI, apiKey: string, models: DysektLBModel[], bas
 	});
 }
 
-export async function dysektlbProvider(pi: ExtensionAPI, agentDir: string): Promise<void> {
+const isAuthFailure = (error: unknown): boolean =>
+	error instanceof CatalogHttpError && (error.status === 401 || error.status === 403);
+
+function warnColdFailure(error: unknown, baseUrl: string): void {
+	const reason = error instanceof Error ? error.message : String(error);
+	if (isAuthFailure(error)) {
+		console.warn(`[dysektlb-provider] Authentication failed (${reason}); update the dysektlb entry in auth.json or DYSEKTLB_API_KEY. DysektLB models will not be listed.`);
+		return;
+	}
+	console.warn(
+		`[dysektlb-provider] Model fetch failed (${reason}) and no cache is available. Check DYSEKTLB_BASE_URL (${baseUrl}) and that the key is valid.`,
+	);
+}
+
+export async function dysektlbProvider(pi: ExtensionAPI, agentDir: string): Promise<CacheFirstResult> {
 	const baseUrl = resolveBaseUrl(agentDir);
 	const path = join(agentDir, ".cache", "dysektlb-models.json");
 	const apiKey = await readApiKey(agentDir);
@@ -361,29 +377,19 @@ export async function dysektlbProvider(pi: ExtensionAPI, agentDir: string): Prom
 		console.warn(
 			"[dysektlb-provider] No API key found — set DYSEKTLB_API_KEY or add a `dysektlb` entry to ~/.pi/agent/auth.json. DysektLB models will not be listed.",
 		);
-		return;
+		return {};
 	}
 
-	try {
-		const models = await fetchModels(apiKey, baseUrl);
-		await writeCache(models, path);
-		register(pi, apiKey, models, baseUrl);
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		if (error instanceof CatalogHttpError && (error.status === 401 || error.status === 403)) {
-			console.warn(`[dysektlb-provider] Authentication failed (${reason}); update the dysektlb entry in auth.json or DYSEKTLB_API_KEY. DysektLB models will not be listed.`);
-			return;
-		}
-		const cached = await loadCache(path);
-		if (cached.length > 0) {
-			register(pi, apiKey, cached, baseUrl);
-			console.warn(
-				`[dysektlb-provider] Model fetch failed (${reason}); using ${cached.length} cached models from ${path}.`,
-			);
-		} else {
-			console.warn(
-				`[dysektlb-provider] Model fetch failed (${reason}) and no cache is available. Check DYSEKTLB_BASE_URL (${baseUrl}) and that the key is valid.`,
-			);
-		}
-	}
+	return registerCacheFirst({
+		loadCache: async () => nonEmpty(await loadCache(path)),
+		fetchFresh: () => fetchModels(apiKey, baseUrl),
+		saveCache: (models) => writeCache(models, path),
+		register: (models) => register(pi, apiKey, models, baseUrl),
+		onColdFailure: (error) => warnColdFailure(error, baseUrl),
+		onRefreshFailure: (error) => {
+			if (!isAuthFailure(error)) return warnStaleCatalog("dysektlb-provider", error);
+			pi.unregisterProvider("dysektlb");
+			warnColdFailure(error, baseUrl);
+		},
+	});
 }
