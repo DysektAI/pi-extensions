@@ -126,7 +126,7 @@ export async function importConfig(ctx: any): Promise<void> {
 		const note = skipped.length ? ` Skipped unknown settings: ${skipped.join(", ")}.` : "";
 		ctx.ui.notify(`Pi config imported; reloading.${note}`, "info");
 	} catch (error) {
-		ctx.ui.notify(`Import failed, nothing changed: ${(error as Error).message}`, "error");
+		ctx.ui.notify(`Import failed: ${(error as Error).message}`, "error");
 		return;
 	}
 	await ctx.reload();

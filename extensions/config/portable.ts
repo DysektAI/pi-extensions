@@ -6,30 +6,39 @@
  * travel. Settings keys come from an allowlist, so API keys, auth and pool
  * files can never be exported.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { getConfigSetting, listConfigSettings } from "../_shared/config-settings.ts";
-import { configDir, readModelRolesFile, writeModelRolesFile, type RolesFile } from "../_shared/model-roles.ts";
+import { configDir, readModelRolesFile, rolesConfigPath, writeModelRolesFile, type RolesFile } from "../_shared/model-roles.ts";
 
 export const PORTABLE_VERSION = 1;
 
-const ROLE_FILE_KEYS = ["roles", "subagentModels", "agentModels", "subagentOptions"] as const;
+type Check = (value: unknown) => boolean;
 
-const SETTING_CHECKS = {
+const ROLE_CHECKS: Record<string, Check> = {
+	roles: isStringRecord,
+	subagentModels: isStringArray,
+	agentModels: (value) => isRecord(value) && Object.values(value).every(isStringArray),
+	subagentOptions: (value) => isRecord(value) && Object.entries(value).every(isTimeoutOption),
+};
+
+const ROLE_FILE_KEYS = Object.keys(ROLE_CHECKS);
+
+const SETTING_CHECKS: Record<string, Check> = {
 	defaultProvider: isString,
 	defaultModel: isString,
 	defaultThinkingLevel: isString,
 	enabledModels: isStringArray,
 	modelThinkingLevels: isStringRecord,
-} as const;
+};
 
-type SettingKey = keyof typeof SETTING_CHECKS;
+const SETTING_KEYS = Object.keys(SETTING_CHECKS);
 
 export interface PortableConfig {
 	piConfig: number;
 	modelRoles: RolesFile;
-	settings: Partial<Record<SettingKey, unknown>>;
+	settings: Record<string, unknown>;
 	extensionSettings: Record<string, string>;
 }
 
@@ -47,6 +56,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringRecord(value: unknown): boolean {
 	return isRecord(value) && Object.values(value).every(isString);
+}
+
+function isTimeoutOption([key, value]: [string, unknown]): boolean {
+	return key === "failFastTimeoutSec" && typeof value === "number" && Number.isFinite(value);
 }
 
 function settingsPath(): string {
@@ -82,7 +95,7 @@ export function buildPortableConfig(): PortableConfig {
 	return {
 		piConfig: PORTABLE_VERSION,
 		modelRoles: pickKeys(readModelRolesFile() as Record<string, unknown>, ROLE_FILE_KEYS) as RolesFile,
-		settings: pickKeys(settings, Object.keys(SETTING_CHECKS)),
+		settings: pickKeys(settings, SETTING_KEYS),
 		extensionSettings,
 	};
 }
@@ -91,10 +104,11 @@ export function exportPortableConfig(): string {
 	return JSON.stringify(buildPortableConfig(), null, 2);
 }
 
-function settingErrors(settings: Record<string, unknown>): string[] {
-	return Object.entries(settings)
-		.filter(([key, value]) => !(key in SETTING_CHECKS) || !SETTING_CHECKS[key as SettingKey](value))
-		.map(([key]) => `settings.${key}`);
+function fieldErrors(section: string, value: unknown, checks: Record<string, Check>): string[] {
+	if (!isRecord(value)) return [section];
+	return Object.entries(value)
+		.filter(([key, field]) => !Object.hasOwn(checks, key) || !checks[key](field))
+		.map(([key]) => `${section}.${key}`);
 }
 
 /** Parse pasted text; throws with every invalid field named. */
@@ -105,15 +119,15 @@ export function parsePortableConfig(text: string): PortableConfig {
 	}
 	const { modelRoles = {}, settings = {}, extensionSettings = {} } = parsed;
 	const errors = [
-		...(isRecord(modelRoles) ? [] : ["modelRoles"]),
-		...(isRecord(settings) ? settingErrors(settings) : ["settings"]),
+		...fieldErrors("modelRoles", modelRoles, ROLE_CHECKS),
+		...fieldErrors("settings", settings, SETTING_CHECKS),
 		...(isStringRecord(extensionSettings) ? [] : ["extensionSettings"]),
 	];
 	if (errors.length > 0) throw new Error(`Invalid Pi config export: ${errors.join(", ")}`);
 	return {
 		piConfig: PORTABLE_VERSION,
-		modelRoles: pickKeys(modelRoles as Record<string, unknown>, ROLE_FILE_KEYS) as RolesFile,
-		settings: settings as PortableConfig["settings"],
+		modelRoles: modelRoles as RolesFile,
+		settings: settings as Record<string, unknown>,
 		extensionSettings: extensionSettings as Record<string, string>,
 	};
 }
@@ -128,15 +142,48 @@ function applyExtensionSettings(values: Record<string, string>): string[] {
 	return skipped;
 }
 
+function withoutKeys(source: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+	return Object.fromEntries(Object.entries(source).filter(([key]) => !keys.includes(key)));
+}
+
+function readRaw(path: string): string | undefined {
+	return existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+}
+
+function restoreRaw(path: string, raw: string | undefined): void {
+	if (raw === undefined) rmSync(path, { force: true });
+	else writeFileSync(path, raw);
+}
+
+function writeBoth(roles: RolesFile, settings: Record<string, unknown>): void {
+	const previousRoles = readRaw(rolesConfigPath());
+	writeModelRolesFile(roles);
+	try {
+		writeSettings(settings);
+	} catch (error) {
+		rollBackRoles(previousRoles, error);
+	}
+}
+
+function rollBackRoles(previousRoles: string | undefined, error: unknown): never {
+	try {
+		restoreRaw(rolesConfigPath(), previousRoles);
+	} catch {
+		throw new Error(`${(error as Error).message}; model-roles.json was imported but settings.json was not`);
+	}
+	throw error;
+}
+
 /**
- * Apply an export: replaces the model-roles keys it carries, sets the settings
- * keys it carries, and leaves everything else (keys, auth, other settings) alone.
+ * Apply an export as a snapshot: the portable keys become exactly what the
+ * export carries (absent ones are cleared); everything else (keys, auth, other
+ * settings) stays. Both files change or neither does.
  * Returns extension settings that are not registered here or have unknown values.
  */
 export function importPortableConfig(text: string): { skipped: string[] } {
 	const config = parsePortableConfig(text);
 	const settings = readSettings();
-	writeModelRolesFile({ ...readModelRolesFile(), ...config.modelRoles });
-	writeSettings({ ...settings, ...config.settings });
+	const roles = withoutKeys(readModelRolesFile() as Record<string, unknown>, ROLE_FILE_KEYS);
+	writeBoth({ ...roles, ...config.modelRoles }, { ...withoutKeys(settings, SETTING_KEYS), ...config.settings });
 	return { skipped: applyExtensionSettings(config.extensionSettings) };
 }

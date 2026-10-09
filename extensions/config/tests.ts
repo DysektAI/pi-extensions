@@ -388,6 +388,10 @@ describe("/config export and import", () => {
 			JSON.stringify({ modelRoles: {} }),
 			JSON.stringify({ piConfig: 1, settings: { apiKey: "sk-secret" } }),
 			JSON.stringify({ piConfig: 1, settings: { enabledModels: "opencode/*" } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { subagentModels: 42 } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { agentModels: { plan: "a/b" } } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { subagentOptions: { failFastTimeoutSec: "9" } } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { secrets: {} } }),
 		];
 		for (const paste of pastes) {
 			const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
@@ -406,6 +410,41 @@ describe("/config export and import", () => {
 		await getHandler()("import", ctx);
 		assert.ok(notifications.some((n) => n.startsWith("Import failed")));
 		assert.deepEqual(getSubagentModels(), []);
+	});
+
+	it("replaces portable choices as a snapshot, clearing ones the export lacks", async () => {
+		setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+		writeFileSync(settingsFile(), JSON.stringify({ enabledModels: ["opencode/*"] }));
+		const text = await exported();
+
+		writeFileSync(join(agentDir, "model-roles.json"), JSON.stringify({ agentModels: { plan: ["x/y"] }, custom: 1 }));
+		writeFileSync(settingsFile(), JSON.stringify({ defaultModel: "local", theme: "dark" }));
+		const { ctx } = makeCtx({ reload: async () => {} });
+		ctx.ui.editor = async () => text;
+		await getHandler()("import", ctx);
+
+		const roles = readModelRolesFile() as any;
+		assert.equal(roles.custom, 1);
+		assert.equal(roles.agentModels, undefined);
+		assert.deepEqual(roles.subagentModels, ["opencode/mimo-v2.6-flash-free:high"]);
+		assert.deepEqual(readJson(settingsFile()), { theme: "dark", enabledModels: ["opencode/*"] });
+	});
+
+	it("restores model roles when settings.json cannot be written", async () => {
+		setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+		const text = await exported();
+		setSubagentModels([]);
+		const rolesBefore = readFileSync(join(agentDir, "model-roles.json"), "utf-8");
+		writeFileSync(settingsFile(), JSON.stringify({ theme: "dark" }));
+		mkdirSync(`${settingsFile()}.${process.pid}.tmp`);
+		const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
+		ctx.ui.editor = async () => text;
+		await getHandler()("import", ctx);
+		rmSync(`${settingsFile()}.${process.pid}.tmp`, { recursive: true });
+
+		assert.ok(notifications.some((n) => n.startsWith("Import failed")));
+		assert.equal(readFileSync(join(agentDir, "model-roles.json"), "utf-8"), rolesBefore);
+		assert.deepEqual(readJson(settingsFile()), { theme: "dark" });
 	});
 
 	it("reports an unreadable settings file instead of throwing from the hotkey", async () => {
