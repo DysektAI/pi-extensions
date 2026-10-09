@@ -220,6 +220,7 @@ test("URL configuration and provider lifecycle use real files and mocked HTTP", 
 				release();
 				await refresh;
 				assert.deepEqual(configs, []);
+				assert.match(warnings.at(-1)!, /Authentication failed/);
 			});
 		}
 		await t.test("malformed response preserves valid cache and registers it", async () => {

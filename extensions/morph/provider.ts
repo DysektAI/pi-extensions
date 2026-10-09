@@ -315,10 +315,15 @@ function register(pi: ExtensionAPI, apiKey: string, models: CatalogModel[]): voi
 const isAuthFailure = (error: unknown): boolean =>
 	error instanceof CatalogHttpError && (error.status === 401 || error.status === 403);
 
+function warnAuthFailure(error: unknown): void {
+	const reason = error instanceof Error ? error.message : String(error);
+	console.warn(`[morph-provider] Authentication failed (${reason}); update the morph entry in auth.json or MORPH_API_KEY. Morph models will not be listed.`);
+}
+
 function registerColdFallback(pi: ExtensionAPI, apiKey: string, error: unknown): void {
 	const reason = error instanceof Error ? error.message : String(error);
 	if (isAuthFailure(error)) {
-		console.warn(`[morph-provider] Authentication failed (${reason}); update the morph entry in auth.json or MORPH_API_KEY. Morph models will not be listed.`);
+		warnAuthFailure(error);
 		return;
 	}
 	register(pi, apiKey, fallbackModels());
@@ -344,7 +349,9 @@ export async function morphProvider(pi: ExtensionAPI, agentDir: string): Promise
 		register: (models) => register(pi, apiKey, models),
 		onColdFailure: (error) => registerColdFallback(pi, apiKey, error),
 		onRefreshFailure: (error) => {
-			if (isAuthFailure(error)) pi.unregisterProvider("morph");
+			if (!isAuthFailure(error)) return;
+			pi.unregisterProvider("morph");
+			warnAuthFailure(error);
 		},
 	});
 }

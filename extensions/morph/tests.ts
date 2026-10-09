@@ -114,6 +114,7 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 				release();
 				await refresh;
 				assert.deepEqual(registrations, []);
+				assert.match(warnings.at(-1)!, /Authentication failed/);
 			});
 			await t.test(`HTTP ${status} without a cache registers no curated models`, async () => {
 				registrations = [];

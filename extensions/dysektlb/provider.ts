@@ -387,7 +387,9 @@ export async function dysektlbProvider(pi: ExtensionAPI, agentDir: string): Prom
 		register: (models) => register(pi, apiKey, models, baseUrl),
 		onColdFailure: (error) => warnColdFailure(error, baseUrl),
 		onRefreshFailure: (error) => {
-			if (isAuthFailure(error)) pi.unregisterProvider("dysektlb");
+			if (!isAuthFailure(error)) return;
+			pi.unregisterProvider("dysektlb");
+			warnColdFailure(error, baseUrl);
 		},
 	});
 }
