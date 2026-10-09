@@ -6,20 +6,27 @@
  * travel. Settings keys come from an allowlist, so API keys, auth and pool
  * files can never be exported.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { getConfigSetting, listConfigSettings } from "../_shared/config-settings.ts";
-import { configDir, readModelRolesFile, rolesConfigPath, writeModelRolesFile, type RolesFile } from "../_shared/model-roles.ts";
+import {
+	configDir,
+	parseRoleKey,
+	readModelRolesFile,
+	rolesConfigPath,
+	writeModelRolesFile,
+	type RolesFile,
+} from "../_shared/model-roles.ts";
 
 export const PORTABLE_VERSION = 1;
 
 type Check = (value: unknown) => boolean;
 
 const ROLE_CHECKS: Record<string, Check> = {
-	roles: isStringRecord,
-	subagentModels: isStringArray,
-	agentModels: (value) => isRecord(value) && Object.values(value).every(isStringArray),
+	roles: (value) => isRecord(value) && Object.values(value).every(isRoleValue),
+	subagentModels: isModelList,
+	agentModels: (value) => isRecord(value) && Object.values(value).every(isModelList),
 	subagentOptions: (value) => isRecord(value) && Object.entries(value).every(isTimeoutOption),
 };
 
@@ -58,6 +65,18 @@ function isStringRecord(value: unknown): boolean {
 	return isRecord(value) && Object.values(value).every(isString);
 }
 
+function isModelKey(value: unknown): boolean {
+	return typeof value === "string" && parseRoleKey(value) !== undefined;
+}
+
+function isModelList(value: unknown): boolean {
+	return Array.isArray(value) && value.every(isModelKey);
+}
+
+function isRoleValue(value: unknown): boolean {
+	return value === "auto" || isModelKey(value);
+}
+
 function isTimeoutOption([key, value]: [string, unknown]): boolean {
 	return key === "failFastTimeoutSec" && typeof value === "number" && Number.isFinite(value);
 }
@@ -77,8 +96,10 @@ function readSettings(): Record<string, unknown> {
 function writeSettings(next: Record<string, unknown>): void {
 	const path = settingsPath();
 	mkdirSync(dirname(path), { recursive: true });
+	const mode = existsSync(path) ? statSync(path).mode & 0o777 : undefined;
 	const tmp = `${path}.${process.pid}.tmp`;
 	writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
+	if (mode !== undefined) chmodSync(tmp, mode);
 	renameSync(tmp, path);
 }
 
@@ -91,7 +112,10 @@ function pickKeys<T extends Record<string, unknown>>(source: T, keys: readonly s
 export function buildPortableConfig(): PortableConfig {
 	const settings = readSettings();
 	const extensionSettings: Record<string, string> = {};
-	for (const setting of listConfigSettings()) extensionSettings[setting.id] = setting.get();
+	for (const setting of listConfigSettings()) {
+		const value = setting.get();
+		if (setting.values.includes(value)) extensionSettings[setting.id] = value;
+	}
 	return {
 		piConfig: PORTABLE_VERSION,
 		modelRoles: pickKeys(readModelRolesFile() as Record<string, unknown>, ROLE_FILE_KEYS) as RolesFile,
@@ -155,21 +179,19 @@ function restoreRaw(path: string, raw: string | undefined): void {
 	else writeFileSync(path, raw);
 }
 
-function writeBoth(roles: RolesFile, settings: Record<string, unknown>): void {
-	const previousRoles = readRaw(rolesConfigPath());
-	writeModelRolesFile(roles);
-	try {
-		writeSettings(settings);
-	} catch (error) {
-		rollBackRoles(previousRoles, error);
-	}
+function currentExtensionSettings(ids: string[]): Array<[string, string]> {
+	return ids.flatMap((id) => {
+		const setting = getConfigSetting(id);
+		return setting ? [[id, setting.get()] as [string, string]] : [];
+	});
 }
 
-function rollBackRoles(previousRoles: string | undefined, error: unknown): never {
+function rollBack(files: Array<[string, string | undefined]>, settings: Array<[string, string]>, error: unknown): never {
 	try {
-		restoreRaw(rolesConfigPath(), previousRoles);
+		for (const [id, value] of settings) getConfigSetting(id)?.set(value);
+		for (const [path, raw] of files) restoreRaw(path, raw);
 	} catch {
-		throw new Error(`${(error as Error).message}; model-roles.json was imported but settings.json was not`);
+		throw new Error(`${(error as Error).message}; the import was only partly applied`);
 	}
 	throw error;
 }
@@ -177,13 +199,20 @@ function rollBackRoles(previousRoles: string | undefined, error: unknown): never
 /**
  * Apply an export as a snapshot: the portable keys become exactly what the
  * export carries (absent ones are cleared); everything else (keys, auth, other
- * settings) stays. Both files change or neither does.
+ * settings) stays. Files and extension settings all change or none do.
  * Returns extension settings that are not registered here or have unknown values.
  */
 export function importPortableConfig(text: string): { skipped: string[] } {
 	const config = parsePortableConfig(text);
 	const settings = readSettings();
 	const roles = withoutKeys(readModelRolesFile() as Record<string, unknown>, ROLE_FILE_KEYS);
-	writeBoth({ ...roles, ...config.modelRoles }, { ...withoutKeys(settings, SETTING_KEYS), ...config.settings });
-	return { skipped: applyExtensionSettings(config.extensionSettings) };
+	const files = [rolesConfigPath(), settingsPath()].map((path): [string, string | undefined] => [path, readRaw(path)]);
+	const previous = currentExtensionSettings(Object.keys(config.extensionSettings));
+	try {
+		writeModelRolesFile({ ...roles, ...config.modelRoles });
+		writeSettings({ ...withoutKeys(settings, SETTING_KEYS), ...config.settings });
+		return { skipped: applyExtensionSettings(config.extensionSettings) };
+	} catch (error) {
+		rollBack(files, previous, error);
+	}
 }

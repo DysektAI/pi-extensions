@@ -15,7 +15,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -83,6 +83,7 @@ function makeCtx(over: Record<string, any> = {}) {
 const shortcuts = new Map<string, any>();
 
 function getHandler() {
+	shortcuts.clear();
 	const commands = new Map<string, any>();
 	configExtension({
 		registerCommand: (name: string, def: any) => commands.set(name, def),
@@ -392,6 +393,9 @@ describe("/config export and import", () => {
 			JSON.stringify({ piConfig: 1, modelRoles: { agentModels: { plan: "a/b" } } }),
 			JSON.stringify({ piConfig: 1, modelRoles: { subagentOptions: { failFastTimeoutSec: "9" } } }),
 			JSON.stringify({ piConfig: 1, modelRoles: { secrets: {} } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { subagentModels: ["garbage"] } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { agentModels: { plan: ["garbage"] } } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { roles: { recap: "garbage" } } }),
 		];
 		for (const paste of pastes) {
 			const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
@@ -445,6 +449,50 @@ describe("/config export and import", () => {
 		assert.ok(notifications.some((n) => n.startsWith("Import failed")));
 		assert.equal(readFileSync(join(agentDir, "model-roles.json"), "utf-8"), rolesBefore);
 		assert.deepEqual(readJson(settingsFile()), { theme: "dark" });
+	});
+
+	it("rolls back files and settings when an extension setter throws", async () => {
+		const unregisterBad = registerConfigSetting({
+			id: "portable-bad",
+			label: "Portable zz broken",
+			values: ["on", "off"],
+			get: () => "on",
+			set: (v: string) => { if (v === "off") throw new Error("setter broke"); },
+		} as any);
+		try {
+			setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+			const text = (await exported()).replace(/": "on"/g, '": "off"');
+			setSubagentModels([]);
+			const rolesBefore = readFileSync(join(agentDir, "model-roles.json"), "utf-8");
+			writeFileSync(settingsFile(), JSON.stringify({ theme: "dark" }));
+			const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
+			ctx.ui.editor = async () => text;
+			await getHandler()("import", ctx);
+
+			assert.ok(notifications.some((n) => n.includes("setter broke")));
+			assert.equal(readFileSync(join(agentDir, "model-roles.json"), "utf-8"), rolesBefore);
+			assert.deepEqual(readJson(settingsFile()), { theme: "dark" });
+			assert.equal(toggle, "on");
+		} finally {
+			unregisterBad();
+		}
+	});
+
+	it("keeps the settings.json file mode", async (t) => {
+		if (process.platform === "win32") return t.skip("POSIX modes only");
+		const text = await exported();
+		writeFileSync(settingsFile(), JSON.stringify({ theme: "dark" }));
+		chmodSync(settingsFile(), 0o600);
+		const { ctx } = makeCtx({ reload: async () => {} });
+		ctx.ui.editor = async () => text;
+		await getHandler()("import", ctx);
+		assert.equal(statSync(settingsFile()).mode & 0o777, 0o600);
+	});
+
+	it("exports only registered settings whose value is one of their choices", async () => {
+		toggle = "sk-secret";
+		const data = JSON.parse(await exported());
+		assert.equal(data.extensionSettings["portable-test"], undefined);
 	});
 
 	it("reports an unreadable settings file instead of throwing from the hotkey", async () => {
