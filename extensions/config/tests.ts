@@ -15,13 +15,14 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import configExtension, { agentListRow, parsePriority, roleModelRuntime, sharedListRow } from "./index.ts";
+import configExtension, { agentListRow, exportConfig, parsePriority, roleModelRuntime, sharedListRow } from "./index.ts";
 import { getSubagentModels, setSubagentModels } from "../_shared/subagent-models.ts";
-import { getRoleValue, setRoleValue } from "../_shared/model-roles.ts";
+import { getRoleValue, readModelRolesFile, setRoleValue } from "../_shared/model-roles.ts";
+import { registerConfigSetting } from "../_shared/config-settings.ts";
 // The TUI picker test constructs core's real ModelSelectorComponent, which
 // needs @earendil-works/pi-coding-agent resolvable (at pi runtime it always
 // is; for tests, symlink pi-fork's workspace into node_modules — gitignored).
@@ -79,9 +80,15 @@ function makeCtx(over: Record<string, any> = {}) {
 	return { ctx, notifications, selectCalls, customCalls, registry };
 }
 
+const shortcuts = new Map<string, any>();
+
 function getHandler() {
+	shortcuts.clear();
 	const commands = new Map<string, any>();
-	configExtension({ registerCommand: (name: string, def: any) => commands.set(name, def) } as any);
+	configExtension({
+		registerCommand: (name: string, def: any) => commands.set(name, def),
+		registerShortcut: (key: string, def: any) => shortcuts.set(key, def),
+	} as any);
 	const cmd = commands.get("config");
 	assert.ok(cmd, "registers a config command");
 	return cmd.handler as (args: string, ctx: any) => Promise<void>;
@@ -295,5 +302,203 @@ describe("/config subagents list editor", () => {
 
 	it("shows an explicit 'none' row when nothing is configured", () => {
 		assert.ok(sharedListRow().includes("none"));
+	});
+});
+
+describe("/config export and import", () => {
+	const settingsFile = () => join(agentDir, "settings.json");
+	const readJson = (path: string) => JSON.parse(readFileSync(path, "utf-8"));
+	let toggle = "on";
+	let unregister: () => void = () => {};
+
+	beforeEach(() => {
+		toggle = "on";
+		unregister = registerConfigSetting({
+			id: "portable-test",
+			label: "Portable test",
+			values: ["on", "off"],
+			get: () => toggle,
+			set: (v: string) => { toggle = v; },
+		} as any);
+	});
+
+	afterEach(() => unregister());
+
+	async function exported(): Promise<string> {
+		let copied = "";
+		await exportConfig(makeCtx().ctx, async (text) => { copied = text; });
+		return copied;
+	}
+
+	it("exports model choices and never secrets", async () => {
+		setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+		writeFileSync(settingsFile(), JSON.stringify({
+			defaultModel: "mimo",
+			enabledModels: ["opencode/*"],
+			modelThinkingLevels: { "opencode/mimo": "high" },
+			apiKey: "sk-secret",
+			providers: { x: { apiKey: "sk-secret" } },
+		}));
+		const text = await exported();
+		assert.ok(!text.includes("sk-secret"));
+		const data = JSON.parse(text);
+		assert.deepEqual(data.modelRoles.subagentModels, ["opencode/mimo-v2.6-flash-free:high"]);
+		assert.deepEqual(data.settings.enabledModels, ["opencode/*"]);
+		assert.equal(data.extensionSettings["portable-test"], "on");
+	});
+
+	it("is registered as /config export and the alt+e shortcut", async () => {
+		const handler = getHandler();
+		assert.ok(shortcuts.get("alt+e"));
+		const { ctx, notifications } = makeCtx();
+		await handler("export", ctx);
+		assert.ok(notifications.some((n) => /Pi config copied|"piConfig": 1/.test(n)), notifications.join("\n"));
+	});
+
+	it("imports into another machine, keeping its keys and other settings", async () => {
+		setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+		writeFileSync(settingsFile(), JSON.stringify({ enabledModels: ["opencode/*"], defaultThinkingLevel: "high" }));
+		toggle = "off";
+		const text = await exported();
+
+		setSubagentModels([]);
+		toggle = "on";
+		writeFileSync(settingsFile(), JSON.stringify({ apiKey: "local-key", theme: "dark" }));
+		let reloaded = 0;
+		const { ctx } = makeCtx({ reload: async () => { reloaded++; } });
+		ctx.ui.editor = async () => text;
+		await getHandler()("import", ctx);
+
+		assert.deepEqual(getSubagentModels(), ["opencode/mimo-v2.6-flash-free:high"]);
+		assert.deepEqual(readJson(settingsFile()), {
+			apiKey: "local-key",
+			theme: "dark",
+			enabledModels: ["opencode/*"],
+			defaultThinkingLevel: "high",
+		});
+		assert.equal(toggle, "off");
+		assert.equal(reloaded, 1);
+	});
+
+	it("rejects invalid pastes without changing anything", async () => {
+		setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+		writeFileSync(settingsFile(), JSON.stringify({ theme: "dark" }));
+		const before = JSON.stringify(readModelRolesFile());
+		const pastes = [
+			"not json",
+			JSON.stringify({ modelRoles: {} }),
+			JSON.stringify({ piConfig: 1, settings: { apiKey: "sk-secret" } }),
+			JSON.stringify({ piConfig: 1, settings: { enabledModels: "opencode/*" } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { subagentModels: 42 } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { agentModels: { plan: "a/b" } } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { subagentOptions: { failFastTimeoutSec: "9" } } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { secrets: {} } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { subagentModels: ["garbage"] } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { agentModels: { plan: ["garbage"] } } }),
+			JSON.stringify({ piConfig: 1, modelRoles: { roles: { recap: "garbage" } } }),
+		];
+		for (const paste of pastes) {
+			const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
+			ctx.ui.editor = async () => paste;
+			await getHandler()("import", ctx);
+			assert.ok(notifications.some((n) => n.startsWith("Import failed")), paste);
+		}
+		assert.equal(JSON.stringify(readModelRolesFile()), before);
+		assert.deepEqual(readJson(settingsFile()), { theme: "dark" });
+
+		const valid = await exported();
+		setSubagentModels([]);
+		writeFileSync(settingsFile(), "{corrupt");
+		const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
+		ctx.ui.editor = async () => valid;
+		await getHandler()("import", ctx);
+		assert.ok(notifications.some((n) => n.startsWith("Import failed")));
+		assert.deepEqual(getSubagentModels(), []);
+	});
+
+	it("replaces portable choices as a snapshot, clearing ones the export lacks", async () => {
+		setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+		writeFileSync(settingsFile(), JSON.stringify({ enabledModels: ["opencode/*"] }));
+		const text = await exported();
+
+		writeFileSync(join(agentDir, "model-roles.json"), JSON.stringify({ agentModels: { plan: ["x/y"] }, custom: 1 }));
+		writeFileSync(settingsFile(), JSON.stringify({ defaultModel: "local", theme: "dark" }));
+		const { ctx } = makeCtx({ reload: async () => {} });
+		ctx.ui.editor = async () => text;
+		await getHandler()("import", ctx);
+
+		const roles = readModelRolesFile() as any;
+		assert.equal(roles.custom, 1);
+		assert.equal(roles.agentModels, undefined);
+		assert.deepEqual(roles.subagentModels, ["opencode/mimo-v2.6-flash-free:high"]);
+		assert.deepEqual(readJson(settingsFile()), { theme: "dark", enabledModels: ["opencode/*"] });
+	});
+
+	it("restores model roles when settings.json cannot be written", async () => {
+		setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+		const text = await exported();
+		setSubagentModels([]);
+		const rolesBefore = readFileSync(join(agentDir, "model-roles.json"), "utf-8");
+		writeFileSync(settingsFile(), JSON.stringify({ theme: "dark" }));
+		mkdirSync(`${settingsFile()}.${process.pid}.tmp`);
+		const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
+		ctx.ui.editor = async () => text;
+		await getHandler()("import", ctx);
+		rmSync(`${settingsFile()}.${process.pid}.tmp`, { recursive: true });
+
+		assert.ok(notifications.some((n) => n.startsWith("Import failed")));
+		assert.equal(readFileSync(join(agentDir, "model-roles.json"), "utf-8"), rolesBefore);
+		assert.deepEqual(readJson(settingsFile()), { theme: "dark" });
+	});
+
+	it("rolls back files and settings when an extension setter throws", async () => {
+		const unregisterBad = registerConfigSetting({
+			id: "portable-bad",
+			label: "Portable zz broken",
+			values: ["on", "off"],
+			get: () => "on",
+			set: (v: string) => { if (v === "off") throw new Error("setter broke"); },
+		} as any);
+		try {
+			setSubagentModels(["opencode/mimo-v2.6-flash-free:high"]);
+			const text = (await exported()).replace(/": "on"/g, '": "off"');
+			setSubagentModels([]);
+			const rolesBefore = readFileSync(join(agentDir, "model-roles.json"), "utf-8");
+			writeFileSync(settingsFile(), JSON.stringify({ theme: "dark" }));
+			const { ctx, notifications } = makeCtx({ reload: async () => assert.fail("must not reload") });
+			ctx.ui.editor = async () => text;
+			await getHandler()("import", ctx);
+
+			assert.ok(notifications.some((n) => n.includes("setter broke")));
+			assert.equal(readFileSync(join(agentDir, "model-roles.json"), "utf-8"), rolesBefore);
+			assert.deepEqual(readJson(settingsFile()), { theme: "dark" });
+			assert.equal(toggle, "on");
+		} finally {
+			unregisterBad();
+		}
+	});
+
+	it("keeps the settings.json file mode", async (t) => {
+		if (process.platform === "win32") return t.skip("POSIX modes only");
+		const text = await exported();
+		writeFileSync(settingsFile(), JSON.stringify({ theme: "dark" }));
+		chmodSync(settingsFile(), 0o600);
+		const { ctx } = makeCtx({ reload: async () => {} });
+		ctx.ui.editor = async () => text;
+		await getHandler()("import", ctx);
+		assert.equal(statSync(settingsFile()).mode & 0o777, 0o600);
+	});
+
+	it("exports only registered settings whose value is one of their choices", async () => {
+		toggle = "sk-secret";
+		const data = JSON.parse(await exported());
+		assert.equal(data.extensionSettings["portable-test"], undefined);
+	});
+
+	it("reports an unreadable settings file instead of throwing from the hotkey", async () => {
+		writeFileSync(settingsFile(), "{corrupt");
+		const { ctx, notifications } = makeCtx();
+		await shortcuts.get("alt+e").handler(ctx);
+		assert.ok(notifications.some((n) => n.startsWith("Export failed")));
 	});
 });

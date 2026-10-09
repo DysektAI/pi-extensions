@@ -14,6 +14,9 @@
  *                           thinking level
  *   /config <role> auto     reset a helper role back to defaults
  *   /config <role> thinking jump straight to the thinking step
+ *   /config export          copy model roles, subagent lists, thinking levels
+ *                           and enabled models as JSON (also: alt+e)
+ *   /config import          paste an export from another machine to apply it
  *
  * Subagent models are an ordered list (1 = tried first, then 2, 3, ... up to
  * MAX_SUBAGENT_MODELS). Each entry carries its own reasoning level. A per-agent
@@ -63,6 +66,7 @@ import {
 	setModelThinking,
 	setSubagentModels,
 } from "../_shared/subagent-models.ts";
+import { exportPortableConfig, importPortableConfig } from "./portable.ts";
 
 const AUTO_LABEL = "Auto (use defaults)";
 
@@ -86,6 +90,48 @@ async function loadModelSelector(): Promise<typeof ModelSelectorComponent | unde
 		return undefined;
 	}
 }
+
+async function copyText(text: string): Promise<void> {
+	const mod = (await import("@earendil-works/pi-coding-agent")) as unknown as {
+		copyToClipboard: (text: string) => Promise<void>;
+	};
+	await mod.copyToClipboard(text);
+}
+
+export async function exportConfig(ctx: any, copy: (text: string) => Promise<void> = copyText): Promise<void> {
+	let text: string;
+	try {
+		text = exportPortableConfig();
+	} catch (error) {
+		ctx.ui.notify(`Export failed: ${(error as Error).message}`, "error");
+		return;
+	}
+	try {
+		await copy(text);
+		ctx.ui.notify("Pi config copied. On the other machine run /config import and paste it.", "info");
+	} catch (error) {
+		ctx.ui.notify(`Clipboard unavailable (${(error as Error).message}). Copy this:\n${text}`, "warning");
+	}
+}
+
+export async function importConfig(ctx: any): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("/config import needs the interactive UI to paste into.", "error");
+		return;
+	}
+	const text = await ctx.ui.editor("Paste a /config export, then submit");
+	if (!text?.trim()) return;
+	try {
+		const { skipped } = importPortableConfig(text);
+		const note = skipped.length ? ` Skipped unknown settings: ${skipped.join(", ")}.` : "";
+		ctx.ui.notify(`Pi config imported; reloading.${note}`, "info");
+	} catch (error) {
+		ctx.ui.notify(`Import failed: ${(error as Error).message}`, "error");
+		return;
+	}
+	await ctx.reload();
+}
+
 /**
  * Thinking levels a model supports, resolved lazily from pi-ai (like the selector
  * above) so this module loads without the pi runtime, e.g. under unit tests.
@@ -488,9 +534,14 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.notify(`${setting.label} = ${match}`, "info");
 	}
 
+	pi.registerShortcut("alt+e", {
+		description: "Copy Pi config for /config import on another machine",
+		handler: (ctx) => exportConfig(ctx),
+	});
+
 	pi.registerCommand("config", {
 		description:
-			"Open Pi config. Or: /config <setting> [value], /config subagents, /config <agent>, /config <role> [auto|thinking]",
+			"Open Pi config. Or: /config <setting> [value], /config subagents, /config <agent>, /config <role> [auto|thinking], /config export|import",
 		handler: async (args, ctx) => {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
 			const key = parts[0]?.toLowerCase();
@@ -501,6 +552,9 @@ export default function (pi: ExtensionAPI) {
 				else ctx.ui.notify(formatStatus(), "info");
 				return;
 			}
+
+			if (key === "export") return exportConfig(ctx);
+			if (key === "import") return importConfig(ctx);
 
 			const setting = getConfigSetting(key);
 			if (setting) {
@@ -541,7 +595,7 @@ export default function (pi: ExtensionAPI) {
 			const agents = listUserAgentNames().join(", ");
 			const roleNames = ROLE_SPECS.map((s) => s.role).join(", ");
 			ctx.ui.notify(
-				`Usage: /config (menu), /config <${settingIds || "setting"}> [value], /config subagents, /config <${agents || "agent"}>, or /config <${roleNames}>`,
+				`Usage: /config (menu), /config <${settingIds || "setting"}> [value], /config subagents, /config <${agents || "agent"}>, /config <${roleNames}>, or /config export|import`,
 				"info",
 			);
 		},
