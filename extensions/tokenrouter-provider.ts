@@ -35,7 +35,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 
-import { nonEmpty, registerCacheFirst } from "./_shared/cache-first.ts";
+import { type CacheFirstResult, nonEmpty, registerCacheFirst } from "./_shared/cache-first.ts";
 import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from "./tokenrouter/pure.ts";
 
 const BASE_URL = "https://api.tokenrouter.com/v1";
@@ -70,7 +70,7 @@ async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {
 	});
 	if (!response.ok) {
 		const hint = response.status === 401 ? "; update the tokenrouter entry in ~/.pi/agent/auth.json" : "";
-		throw new Error(`HTTP ${response.status}${hint}`);
+		throw Object.assign(new Error(`HTTP ${response.status}${hint}`), { status: response.status });
 	}
 	const models = extractModels(await response.json()).filter(isServableModel);
 	if (models.length === 0) throw new Error("no servable models returned for this key");
@@ -110,16 +110,18 @@ function register(pi: ExtensionAPI, apiKey: string, models: TokenRouterModel[]):
 	});
 }
 
-export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<void> {
+const isAuthFailure = (error: unknown): boolean => [401, 403].includes((error as { status?: number }).status ?? 0);
+
+export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<CacheFirstResult> {
 	const apiKey = await readApiKey();
 	if (!apiKey) {
 		console.warn(
 			"[tokenrouter-provider] No API key found — set TOKENROUTER_API_KEY or add a `tokenrouter` entry to ~/.pi/agent/auth.json. TokenRouter models will not be listed.",
 		);
-		return;
+		return {};
 	}
 
-	await registerCacheFirst({
+	return registerCacheFirst({
 		loadCache: async () => nonEmpty(await loadCache()),
 		fetchFresh: () => fetchModels(apiKey),
 		saveCache: writeCache,
@@ -129,6 +131,11 @@ export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<voi
 			console.warn(
 				`[tokenrouter-provider] Model fetch failed (${reason}) and no cache is available. Check the base URL (${BASE_URL}) and that the key is valid.`,
 			);
+		},
+		onRefreshFailure: (error) => {
+			if (!isAuthFailure(error)) return;
+			pi.unregisterProvider("tokenrouter");
+			console.warn(`[tokenrouter-provider] Authentication failed (${(error as Error).message}). TokenRouter models will not be listed.`);
 		},
 	});
 }
