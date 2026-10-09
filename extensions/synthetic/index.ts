@@ -2,13 +2,14 @@
  * Synthetic provider (https://synthetic.new): OpenAI-compatible, catalog fetched live.
  *
  * Auth: `synthetic` entry in ~/.pi/agent/auth.json, then SYNTHETIC_API_KEY. Without a
- * key the provider is skipped silently. A failed fetch falls back to the last catalog
- * cached (0600) under ~/.pi/agent/.cache/synthetic-models.json.
+ * key the provider is skipped silently. The last catalog cached (0600) under
+ * ~/.pi/agent/.cache/synthetic-models.json registers first; a fresh fetch replaces it.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { nonEmpty, registerCacheFirst } from "../_shared/cache-first.ts";
 import { extractModels, SYNTHETIC_BASE_URL, type SyntheticModel, toPiModel } from "./pure.ts";
 
 const FETCH_TIMEOUT_MS = 10000;
@@ -54,20 +55,7 @@ async function saveCache(models: SyntheticModel[]): Promise<void> {
 	}
 }
 
-export default async function syntheticProvider(pi: ExtensionAPI): Promise<void> {
-	const apiKey = await readApiKey();
-	if (!apiKey) return;
-
-	let catalog: SyntheticModel[];
-	try {
-		catalog = await fetchCatalog(apiKey);
-		await saveCache(catalog);
-	} catch (error) {
-		catalog = await cached();
-		const reason = error instanceof Error ? error.message : String(error);
-		console.warn(`[synthetic] Catalog fetch failed (${reason}); using ${catalog.length} cached models.`);
-	}
-
+function register(pi: ExtensionAPI, apiKey: string, catalog: SyntheticModel[]): void {
 	const models = catalog.flatMap((entry) => {
 		const model = toPiModel(entry);
 		return model ? [model] : [];
@@ -81,5 +69,21 @@ export default async function syntheticProvider(pi: ExtensionAPI): Promise<void>
 		api: "openai-completions",
 		authHeader: true,
 		models: models as never,
+	});
+}
+
+export default async function syntheticProvider(pi: ExtensionAPI): Promise<void> {
+	const apiKey = await readApiKey();
+	if (!apiKey) return;
+
+	await registerCacheFirst({
+		loadCache: async () => nonEmpty(await cached()),
+		fetchFresh: () => fetchCatalog(apiKey),
+		saveCache,
+		register: (catalog) => register(pi, apiKey, catalog),
+		onColdFailure: (error) => {
+			const reason = error instanceof Error ? error.message : String(error);
+			console.warn(`[synthetic] Catalog fetch failed (${reason}) and no cache is available.`);
+		},
 	});
 }

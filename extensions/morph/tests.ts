@@ -39,8 +39,16 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 	const originalKey = process.env.MORPH_API_KEY;
 	let registrations: any[] = [];
 	const warnings: string[] = [];
-	const pi = { registerProvider: (name: string, config: unknown) => registrations.push({ name, config }) };
-	const run = () => morphProvider(pi as Parameters<typeof morphProvider>[0], dir);
+	const pi = {
+		registerProvider: (name: string, config: unknown) => registrations.push({ name, config }),
+		unregisterProvider: (name: string) => { registrations = registrations.filter((r) => r.name !== name); },
+	};
+	const start = () => morphProvider(pi as Parameters<typeof morphProvider>[0], dir);
+	const run = async () => {
+		const result = await start();
+		await result.refresh;
+		return result;
+	};
 	console.warn = (message) => warnings.push(String(message));
 	process.env.MORPH_API_KEY = "test-env-key";
 	try {
@@ -95,13 +103,26 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 			}
 		});
 		for (const status of [401, 403]) {
-			await t.test(`HTTP ${status} does not register cached or curated models`, async () => {
+			await t.test(`HTTP ${status} withdraws cached models once the refresh is rejected`, async () => {
 				registrations = [];
 				await writeFile(cache, JSON.stringify([known]));
+				let release!: () => void;
+				const gate = new Promise<void>((resolve) => { release = resolve; });
+				globalThis.fetch = async () => { await gate; return new Response("rejected", { status }); };
+				const { refresh } = await start();
+				assert.equal(registrations.length, 1, "the cached catalog registers without waiting for the network");
+				release();
+				await refresh;
+				assert.deepEqual(registrations, []);
+			});
+			await t.test(`HTTP ${status} without a cache registers no curated models`, async () => {
+				registrations = [];
+				await rm(cache);
 				globalThis.fetch = async () => new Response("rejected", { status });
 				await run();
 				assert.deepEqual(registrations, []);
 				assert.match(warnings.at(-1)!, /Authentication failed/);
+				await writeFile(cache, JSON.stringify([known]));
 			});
 		}
 		await t.test("outage uses validated cache", async () => {

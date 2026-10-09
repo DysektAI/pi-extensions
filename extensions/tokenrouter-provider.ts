@@ -18,9 +18,9 @@
  *
  * When neither is set, the provider is skipped entirely.
  *
- * Resilience: never throws. A failed fetch falls back to the last-known model
- * list cached on disk, so models still appear when TokenRouter is briefly
- * unreachable. The cache is written with 0600 because a catalog fetch requires
+ * Resilience: never throws. The last-known model list cached on disk registers
+ * immediately and a background fetch replaces it (see _shared/cache-first.ts),
+ * so startup never waits on TokenRouter once a cache exists. The cache is written with 0600 because a catalog fetch requires
  * sending the API key and catalog contents can be sensitive.
  *
  * Model metadata (reasoning support, image input, context window, thinking
@@ -35,6 +35,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 
+import { nonEmpty, registerCacheFirst } from "./_shared/cache-first.ts";
 import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from "./tokenrouter/pure.ts";
 
 const BASE_URL = "https://api.tokenrouter.com/v1";
@@ -118,22 +119,16 @@ export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<voi
 		return;
 	}
 
-	try {
-		const models = await fetchModels(apiKey);
-		await writeCache(models);
-		register(pi, apiKey, models);
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		const cached = await loadCache();
-		if (cached.length > 0) {
-			register(pi, apiKey, cached);
-			console.warn(
-				`[tokenrouter-provider] Model fetch failed (${reason}); using ${cached.length} cached models from ${cachePath()}.`,
-			);
-		} else {
+	await registerCacheFirst({
+		loadCache: async () => nonEmpty(await loadCache()),
+		fetchFresh: () => fetchModels(apiKey),
+		saveCache: writeCache,
+		register: (models) => register(pi, apiKey, models),
+		onColdFailure: (error) => {
+			const reason = error instanceof Error ? error.message : String(error);
 			console.warn(
 				`[tokenrouter-provider] Model fetch failed (${reason}) and no cache is available. Check the base URL (${BASE_URL}) and that the key is valid.`,
 			);
-		}
-	}
+		},
+	});
 }

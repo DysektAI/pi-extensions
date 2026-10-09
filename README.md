@@ -60,7 +60,7 @@ AI Agent Kit already sets this; standalone installations need this setting.
 - **`agentrouter-item-id-replay`**: Keeps portable call IDs and encrypted reasoning while removing resource-scoped replay IDs on AgentRouter Responses requests.
 - **`startup-welcome`**: Dysekt startup branding and resource summary.
 - **`kit-status`**: Optional AI Agent Kit drift notification adapter; uses its separately installed status script and stays quiet when the kit is absent.
-- **`morph-provider`**: Custom Morph adapter with live model discovery, cached and curated fallbacks, and verified chat models only (specialized and unknown IDs are excluded). Pricing is a documented snapshot; authentication failures skip registration. Reads `morph` from `auth.json` or `MORPH_API_KEY`; supports `MORPH_BASE_URL` and `MORPH_MODELS_TIMEOUT_MS`. Moved from AI Agent Kit; remove the old local `morph-provider.ts` copy to avoid duplicate registration.
+- **`morph-provider`**: Custom Morph adapter with live model discovery, cached and curated fallbacks, and verified chat models only (specialized and unknown IDs are excluded). Pricing is a documented snapshot; a rejected key withdraws the provider. Reads `morph` from `auth.json` or `MORPH_API_KEY`; supports `MORPH_BASE_URL` and `MORPH_MODELS_TIMEOUT_MS`. Moved from AI Agent Kit; remove the old local `morph-provider.ts` copy to avoid duplicate registration.
 - **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
 - **`opencode-compat`**: Opt-in OpenCode Zen/Go request compatibility on upstream Pi 0.99.1+: session identifiers, client headers, and inert tool declarations for summaries and helper calls. Enable with `PI_OPENCODE_COMPAT=1` only when stock requests fail. Retains fork conventions without changing upstream adapters; live service acceptance can change independently.
 - **`credential-pool`**: API key rotation framework (template in `pools.example.json`).
@@ -80,6 +80,9 @@ AI Agent Kit already sets this; standalone installations need this setting.
 ### Configuration (`/config`)
 `extensions/config.ts` manages settings registered dynamically by other extensions via `registerConfigSetting` (`_shared/config-settings.ts`).
 Model roles (`recap`, `title`, `judge`) and ordered subagent fallback chains (`subagentModels`, `agentModels`) persist in `~/.pi/agent/model-roles.json`. Subagents resolve their model chain at spawn time, keeping agent markdown files clean of environment-specific model pins.
+
+### Provider catalogs
+Pi loads extensions one at a time, so a provider that awaits its `/models` fetch delays every later extension by up to its timeout. `dysektlb`, `morph`, `tokenrouter`, and `synthetic` register their last cached catalog (`~/.pi/agent/.cache/*-models.json`) immediately and refresh it in the background (`_shared/cache-first.ts`); only the first run without a cache waits for the network.
 
 ### Context Management & `/clear-implement`
 `extensions/context-management.ts` hooks `turn_end` rather than waiting for Pi's fallback `agent_end` trigger:

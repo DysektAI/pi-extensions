@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
 import { mkdir, open, readFile } from "fs/promises";
 import { dirname, join } from "path";
+import { type CacheFirstResult, registerCacheFirst } from "../_shared/cache-first.ts";
 
 /**
  * Morph (Morphllm) provider for pi — https://morphllm.com
@@ -22,9 +23,9 @@ import { dirname, join } from "path";
  * bare string), then `$MORPH_API_KEY`.
  *
  * Resilience:
- * - Authentication failures leave the provider unregistered. Other failed fetches
- *   fall back to the last-known model list
- *   cached on disk, so models still appear when Morph is briefly unreachable.
+ * - The last-known model list cached on disk registers immediately and a
+ *   background fetch replaces it (see _shared/cache-first.ts); only a cold
+ *   cache waits for the network. A rejected key withdraws the provider.
  * - If neither the fetch nor the cache yields a catalog, a curated fallback
  *   list (Fast Models from docs.morphllm.com) is registered so the provider
  *   is immediately usable; pricing there is a snapshot and the catalog fetch
@@ -294,6 +295,7 @@ function register(pi: ExtensionAPI, apiKey: string, models: CatalogModel[]): voi
 	});
 	const mapped = mapModels(models);
 	if (mapped.length === 0) {
+		pi.unregisterProvider("morph");
 		console.warn("[morph-provider] Catalog has no verified chat models; Morph models will not be listed.");
 		return;
 	}
@@ -310,37 +312,39 @@ function register(pi: ExtensionAPI, apiKey: string, models: CatalogModel[]): voi
 	});
 }
 
-export async function morphProvider(pi: ExtensionAPI, agentDir: string): Promise<void> {
+const isAuthFailure = (error: unknown): boolean =>
+	error instanceof CatalogHttpError && (error.status === 401 || error.status === 403);
+
+function registerColdFallback(pi: ExtensionAPI, apiKey: string, error: unknown): void {
+	const reason = error instanceof Error ? error.message : String(error);
+	if (isAuthFailure(error)) {
+		console.warn(`[morph-provider] Authentication failed (${reason}); update the morph entry in auth.json or MORPH_API_KEY. Morph models will not be listed.`);
+		return;
+	}
+	register(pi, apiKey, fallbackModels());
+	console.warn(
+		`[morph-provider] Model fetch failed (${reason}) and no cache is available; registered the curated fallback models. Check MORPH_BASE_URL (${BASE_URL}) and that the key is valid.`,
+	);
+}
+
+export async function morphProvider(pi: ExtensionAPI, agentDir: string): Promise<CacheFirstResult> {
 	const path = join(agentDir, ".cache", "morph-models.json");
 	const apiKey = await readApiKey(agentDir);
 	if (!apiKey) {
 		console.warn(
 			"[morph-provider] No API key found — set MORPH_API_KEY or add a `morph` entry to ~/.pi/agent/auth.json. Morph models will not be listed.",
 		);
-		return;
+		return {};
 	}
 
-	try {
-		const models = await fetchModels(apiKey);
-		await writeCache(models, path);
-		register(pi, apiKey, models);
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		if (error instanceof CatalogHttpError && (error.status === 401 || error.status === 403)) {
-			console.warn(`[morph-provider] Authentication failed (${reason}); update the morph entry in auth.json or MORPH_API_KEY. Morph models will not be listed.`);
-			return;
-		}
-		const cached = await loadCache(path);
-		if (cached !== undefined) {
-			register(pi, apiKey, cached);
-			console.warn(
-				`[morph-provider] Model fetch failed (${reason}); using ${cached.length} cached models from ${path}.`,
-			);
-		} else {
-			register(pi, apiKey, fallbackModels());
-			console.warn(
-				`[morph-provider] Model fetch failed (${reason}) and no cache is available; registered the curated fallback models. Check MORPH_BASE_URL (${BASE_URL}) and that the key is valid.`,
-			);
-		}
-	}
+	return registerCacheFirst({
+		loadCache: () => loadCache(path),
+		fetchFresh: () => fetchModels(apiKey),
+		saveCache: (models) => writeCache(models, path),
+		register: (models) => register(pi, apiKey, models),
+		onColdFailure: (error) => registerColdFallback(pi, apiKey, error),
+		onRefreshFailure: (error) => {
+			if (isAuthFailure(error)) pi.unregisterProvider("morph");
+		},
+	});
 }
