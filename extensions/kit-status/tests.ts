@@ -25,7 +25,7 @@ function mockProcesses(outcomes: Outcome[]) {
 			child.emit("close", outcome.code ?? 0);
 		});
 		return child;
-	}) as typeof spawn;
+	}) as unknown as typeof spawn;
 	return { spawnProcess, calls, killed: () => killed };
 }
 
@@ -132,7 +132,7 @@ test("actual SIGTERM-resistant child is reaped before timeout resolves", { skip:
             child.on("error", onError);
             child.on("close", onClose);
         });
-        const spawnProcess = (() => child) as typeof spawn;
+        const spawnProcess = (() => child) as unknown as typeof spawn;
         const result = await runWith([process.execPath], [], spawnProcess, 5, 30);
         assert.equal(result, "");
         assert.equal(closed, true);

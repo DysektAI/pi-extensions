@@ -171,25 +171,25 @@ describe("Goal State Transitions", () => {
 
   it("does not resume a completed goal", () => {
     state.status = "done";
-    const canResume = state.status !== "done" && state.status !== "done_with_notes";
+    const canResume = canResumeGoal(state.status);
     assert.equal(canResume, false);
   });
 
   it("does not resume a done_with_notes goal", () => {
     state.status = "done_with_notes";
-    const canResume = state.status !== "done" && state.status !== "done_with_notes";
+    const canResume = canResumeGoal(state.status);
     assert.equal(canResume, false);
   });
 
   it("allows resuming a paused goal", () => {
     state.status = "paused";
-    const canResume = state.status !== "done" && state.status !== "done_with_notes";
+    const canResume = canResumeGoal(state.status);
     assert.equal(canResume, true);
   });
 
   it("allows resuming a budget_exhausted goal", () => {
     state.status = "budget_exhausted";
-    const canResume = state.status !== "done" && state.status !== "done_with_notes";
+    const canResume = canResumeGoal(state.status);
     assert.equal(canResume, true);
   });
 });

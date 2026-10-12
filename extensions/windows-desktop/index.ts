@@ -54,7 +54,7 @@ async function runDriver(args: string[]): Promise<any> {
 
 export default function (pi: ExtensionAPI) {
   // Inject instructions into system prompt so the model knows it has desktop capabilities
-  pi.on("before_agent_run", async (event) => {
+  pi.on("before_agent_start", async (event) => {
     const promptDirective =
       "\n\n[Windows Desktop Automation Tools Available]\n" +
       "You have direct access to the Windows desktop via native tools:\n" +

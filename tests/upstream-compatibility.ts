@@ -14,7 +14,9 @@ import { test } from "node:test";
 import {
 	getCurrentTools,
 	normalizeContext,
-	AssistantMessageEventStream,
+	createAssistantMessageEventStream,
+	type AssistantMessage,
+	type Model,
 } from "@earendil-works/pi-ai";
 import {
 	ModelRuntime,
@@ -47,7 +49,7 @@ process.env.PI_CODING_AGENT_DIR = temp;
 process.env.PI_OFFLINE = "1";
 process.env.PI_OPENCODE_COMPAT = "1";
 process.on("exit", () => rmSync(temp, { recursive: true, force: true }));
-const model = {
+const model: Model<"openai-completions"> = {
 	id: "test",
 	name: "Test",
 	provider: "opencode",
@@ -63,7 +65,7 @@ const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: 0 }],
 });
 function completed() {
-	const message = {
+	const message: AssistantMessage = {
 		role: "assistant",
 		content: [{ type: "text", text: "ok" }],
 		api: model.api,
@@ -80,7 +82,7 @@ function completed() {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 	};
-	const stream = new AssistantMessageEventStream();
+	const stream = createAssistantMessageEventStream();
 	stream.push({ type: "done", reason: "stop", message });
 	stream.end(message);
 	return stream;
@@ -100,7 +102,7 @@ test("compatibility covers both stream APIs and tool removals without mutating i
 				],
 				timestamp: 0,
 			},
-			{ role: "system", content: "", toolsRemoved: ["bash"], timestamp: 1 },
+			{ role: "system", content: "", toolsRemoved: [{ name: "bash" }], timestamp: 1 },
 			{ role: "user", content: "summarize", timestamp: 2 },
 		],
 	});
@@ -115,7 +117,8 @@ test("compatibility covers both stream APIs and tool removals without mutating i
 			[method](model as any, removed, { sessionId: "conversation-1" })
 			.result();
 		assert.deepEqual(
-			getCurrentTools(capture.ctx.messages).map((t) => t.name),
+			// Removing and restoring bash moves it after read in transcript insertion order.
+			getCurrentTools(capture.ctx.messages).map((t) => t.name).sort(),
 			["bash", "read"],
 		);
 		assert.match(

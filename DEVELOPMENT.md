@@ -76,6 +76,13 @@ runtime or API keys needed:
 npm test
 ```
 
+Run `npm run verify` before pushing. It runs the strict TypeScript check across
+all extensions and tests, then the unit tests. `npm run typecheck` runs only the
+type check. The pinned Pi SDK development dependencies provide the same types
+to the editor; run `npm ci` after updating this checkout.
+The Pi SDK requires Node 22.19 or newer for runtime integration tests. Node 20
+can still run the type check and dependency-free unit tests.
+
 Test files live next to the code they cover as `extensions/<name>/tests.ts` and
 must only import from dependency-free modules (e.g. `pure.ts`, `client.ts`),
 never from `@earendil-works/*`. When you add a new test file, append it to the

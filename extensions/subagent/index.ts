@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
@@ -232,7 +232,7 @@ type DisplayItem =
 	| { type: "toolCall"; name: string; args: Record<string, any> }
 	| { type: "toolResult"; toolName: string; output: string; isError: boolean };
 
-function getToolResultOutput(msg: Message): string {
+function getToolResultOutput(msg: Pick<ToolResultMessage, "content">): string {
 	const parts: string[] = [];
 	for (const part of msg.content) {
 		if (part.type === "text") parts.push(part.text);
@@ -240,7 +240,9 @@ function getToolResultOutput(msg: Message): string {
 	return parts.join("\n");
 }
 
-function getDisplayItems(messages: Message[]): DisplayItem[] {
+type DisplayMessage = Message | (Omit<ToolResultMessage, "role"> & { role: "tool" });
+
+function getDisplayItems(messages: DisplayMessage[]): DisplayItem[] {
 	const items: DisplayItem[] = [];
 	for (const msg of messages) {
 		if (msg.role === "assistant") {

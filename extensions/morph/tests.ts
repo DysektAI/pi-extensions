@@ -43,7 +43,7 @@ test("provider discovery, credential rejection and outage fallback", async (t) =
 		registerProvider: (name: string, config: unknown) => registrations.push({ name, config }),
 		unregisterProvider: (name: string) => { registrations = registrations.filter((r) => r.name !== name); },
 	};
-	const start = () => morphProvider(pi as Parameters<typeof morphProvider>[0], dir);
+	const start = () => morphProvider(pi as unknown as Parameters<typeof morphProvider>[0], dir);
 	const run = async () => {
 		const result = await start();
 		await result.refresh;

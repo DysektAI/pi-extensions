@@ -54,9 +54,8 @@
  * the first turn to generate a phased parallel execution plan embedded in the kickoff prompt.
  */
 
+import { complete, getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import {
-  complete,
-  getModel,
   type Model,
   type UserMessage,
 } from "@earendil-works/pi-ai";
@@ -123,7 +122,8 @@ function getModelFromRegistry(provider: string, modelId: string): Model<any> | n
   if (capturedModelRegistry) {
     return capturedModelRegistry.find(provider, modelId) ?? null;
   }
-  return getModel(provider, modelId);
+  const builtinProvider = getProviders().find((candidate) => candidate === provider);
+  return builtinProvider ? getModels(builtinProvider).find((model) => model.id === modelId) ?? null : null;
 }
 
 // Cached config
@@ -155,7 +155,7 @@ function isModelAvailable(provider: string, modelId: string): boolean {
     return capturedModelRegistry.find(provider, modelId) != null;
   }
   // Fallback: built-in providers only (better than nothing for bootstrap)
-  return getModel(provider, modelId) != null;
+  return getModelFromRegistry(provider, modelId) != null;
 }
 
 // ── Completion Signal Detection ─────────────────────────────────────────────
@@ -530,7 +530,7 @@ async function callJudge(
       return {
         done: false,
         blocked: false,
-        reason: `No auth for judge model - continuing (${auth.error ?? "no API key"})`,
+        reason: `No auth for judge model - continuing (${!auth.ok ? auth.error : "no API key"})`,
         confidence: 0,
         issues: [],
       };
@@ -538,7 +538,7 @@ async function callJudge(
     return {
       done: false,
       blocked: true,
-      reason: `No auth for judge model: ${auth.error ?? "no API key"}`,
+      reason: `No auth for judge model: ${!auth.ok ? auth.error : "no API key"}`,
       confidence: 0,
       issues: [],
     };
@@ -1300,7 +1300,7 @@ async function handleAgentEnd(
         const issueNote = verdict.issues.length > 0
           ? ` (${verdict.issues.length} minor note${verdict.issues.length > 1 ? "s" : ""})`
           : "";
-        ctx.ui.notify(`Goal completed!${issueNote} ${verdict.reason}`, "success");
+        ctx.ui.notify(`Goal completed!${issueNote} ${verdict.reason}`, "info");
         ctx.ui.setStatus("goal", `${statusIcon("done")} Goal done`);
       }
     } else if (verdict.blocked) {
