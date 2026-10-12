@@ -359,6 +359,7 @@ describe("toPiModel", () => {
 
 	it("sends max_completion_tokens for OpenAI-family models", () => {
 		const model = toPiModel({ id: "openai/gpt-6-luna", supported_endpoint_types: ["openai"] });
+		assert.ok("maxTokensField" in model.compat);
 		assert.equal(model.compat.maxTokensField, "max_completion_tokens");
 	});
 
@@ -390,6 +391,7 @@ describe("toPiModel", () => {
 
 	it("keeps legacy max_tokens for non-OpenAI vendors", () => {
 		const glm = toPiModel({ id: "z-ai/glm-5.3", supported_endpoint_types: ["openai"] });
+		assert.ok("maxTokensField" in glm.compat);
 		assert.equal(glm.compat.maxTokensField, "max_tokens");
 	});
 
@@ -410,7 +412,7 @@ describe("toPiModel", () => {
 	it("keeps dual-endpoint Claude aliases on the OpenAI API", () => {
 		const model = toPiModel({ id: "anthropic/claude-opus-5-huo", supported_endpoint_types: ["anthropic", "openai"] });
 		assert.equal(model.api, "openai-completions");
-		assert.equal(model.baseUrl, undefined);
+		assert.equal("baseUrl" in model ? model.baseUrl : undefined, undefined);
 	});
 
 	it("wires a non-adaptive Anthropic-only id without forceAdaptiveThinking", () => {
@@ -425,7 +427,9 @@ describe("toPiModel", () => {
 		assert.deepEqual(mimo.input, ["text", "image"]);
 		assert.equal(mimo.contextWindow, 1_048_576);
 		assert.equal(mimo.maxTokens, 131_072);
+		assert.ok("thinkingFormat" in mimo.compat);
 		assert.equal(mimo.compat.thinkingFormat, "deepseek");
+		assert.ok("requiresReasoningContentOnAssistantMessages" in mimo.compat);
 		assert.equal(mimo.compat.requiresReasoningContentOnAssistantMessages, true);
 		// No thinkingLevelMap: effort levels pass through as-is (see above).
 		assert.equal(mimo.thinkingLevelMap, undefined);

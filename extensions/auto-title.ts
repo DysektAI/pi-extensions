@@ -25,7 +25,7 @@
  *   Ctrl+Shift+T      One-key: regenerate a broad title from the whole session
  */
 
-import { complete } from "@earendil-works/pi-ai";
+import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { resolveRoleCandidates, roleThinkingOption } from "./_shared/model-roles.ts";

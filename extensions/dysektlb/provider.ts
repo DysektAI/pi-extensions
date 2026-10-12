@@ -191,7 +191,7 @@ export function toPiModel(model: DysektLBModel) {
 		name: `${model.metadata?.display_name ?? model.name ?? titleize(model.id)} (DysektLB)`,
 		reasoning: Boolean(model.capabilities?.supports_reasoning ?? model.supports_reasoning ?? model.supportsReasoning ?? levels),
 		thinkingLevelMap: levels,
-		input: supportsImages ? (["text", "image"] as const) : (["text"] as const),
+		input: supportsImages ? (["text", "image"] as ("text" | "image")[]) : (["text"] as ("text" | "image")[]),
 		contextWindow: num(
 			model.metadata?.context_window,
 			model.metadata?.input_context_window,
@@ -346,10 +346,6 @@ function register(pi: ExtensionAPI, apiKey: string, models: DysektLBModel[], bas
 		apiKey,
 		api: "openai-completions",
 		authHeader: true,
-		compat: {
-			supportsDeveloperRole: false,
-			supportsReasoningEffort: true,
-		},
 		headers: { "User-Agent": USER_AGENT },
 		models: models.map(toPiModel),
 	});
