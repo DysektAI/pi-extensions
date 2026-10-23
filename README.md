@@ -7,9 +7,9 @@ Public-safe [Pi](https://github.com/earendil-works/pi) coding-agent extensions f
 Install once, then customize via `/config` or granular package filters.
 
 > [!NOTE]
-> **Separate integration packages:** LSP tools and `/lsp` live in [DysektAI/pi-lsp](https://github.com/DysektAI/pi-lsp). Discord now lives in [DysektAI/pi-discord](https://github.com/DysektAI/pi-discord). Their old entries were removed to avoid duplicate tool registration.
+> **Separate integration packages:** LSP tools and `/lsp` live in [DysektAI/pi-lsp](https://github.com/DysektAI/pi-lsp). Discord now lives in [DysektAI/pi-cord](https://github.com/DysektAI/pi-cord). Their old entries were removed to avoid duplicate tool registration.
 >
-> **Discord migration (v0.6.0):** Install `pi install git:github.com/DysektAI/pi-discord` before updating this package. Existing Discord environment variables and `discord.json` paths remain supported. The standalone package retains explicit, unsupported user-token access, adds confirmation for every write, and documents Discord's account-policy risks.
+> **Discord migration (v0.6.0):** Install `pi install git:github.com/DysektAI/pi-cord` before updating this package. Existing Discord environment variables and `discord.json` paths remain supported. The standalone package retains explicit, unsupported user-token access, adds confirmation for every write, and documents Discord's account-policy risks.
 
 ## Installation
 
@@ -71,7 +71,7 @@ AI Agent Kit already sets this; standalone installations need this setting.
 - **`typesafe`**: TypeSafe Jev bounded judgment model (`typesafe_ask` tool, `/jev`). Key from `auth.json` (`typesafe`) or `TYPESAFE_API_KEY`. Pre-checks stay disabled unless `TYPESAFE_AUTO=on` ([docs](extensions/typesafe/README.md)). Bundles `skills/typesafe-ai` and `skills/jev-judgments`.
 - **`web-search`**: Brave and DuckDuckGo web search and page fetch tools ([docs](extensions/web-search.README.md)).
 - **`context7`**: Documentation query tools powered by Context7 CLI.
-- **Discord (separate package)**: Install [pi-discord](https://github.com/DysektAI/pi-discord) for the `discord` REST tool, multi-account selection, approved writes, and rate-limit handling. It is no longer bundled here.
+- **Discord (separate package)**: Install [pi-cord](https://github.com/DysektAI/pi-cord) for the `discord` REST tool, multi-account selection, approved writes, and rate-limit handling. It is no longer bundled here.
 - **`windows-desktop`**: Native Windows desktop GUI automation driver (screenshots, input, focus) ([docs](extensions/windows-desktop/README.md)).
 - **`auto-update`**: Opt-in automatic package update checks on startup or via `/auto-update`.
 
