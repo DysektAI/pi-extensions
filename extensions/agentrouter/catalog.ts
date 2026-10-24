@@ -125,8 +125,10 @@ export function createCatalogRefresh(options: {
 			context.credential?.type !== "api_key" ||
 			typeof context.credential.key !== "string" ||
 			!context.credential.key.trim()
-		)
+		) {
+			if (context.force) throw new Error("AgentRouter refresh needs an API key resolved by Pi; check models.json.");
 			return current;
+		}
 		// A disk cache never proves access for this process/key. Refresh once per
 		// startup and after key/endpoint changes, then debounce picker refreshes.
 		if (
@@ -199,6 +201,12 @@ export function registerAgentRouter(pi: ExtensionAPI, baseUrl: string, upstream:
 	pi.registerCommand("agentrouter-refresh", {
 		description: "Refresh the AgentRouter models accessible to the configured key",
 		handler: async (_args, ctx) => {
+			// Pi skips the network refresh phase when auth resolves empty, so check
+			// here too: that skip must not be reported as a successful forced fetch.
+			if (!(await ctx.modelRegistry.getApiKeyForProvider("agentrouter"))?.trim()) {
+				ctx.ui.notify("AgentRouter refresh needs a configured API key; check models.json.", "warning");
+				return;
+			}
 			const result = await ctx.modelRegistry.refresh({ providers: ["agentrouter"], force: true });
 			const error = result.errors.get("agentrouter");
 			if (error || result.aborted) {
@@ -206,7 +214,7 @@ export function registerAgentRouter(pi: ExtensionAPI, baseUrl: string, upstream:
 				return;
 			}
 			const count = ctx.modelRegistry.getAll().filter((model) => model.provider === "agentrouter").length;
-			ctx.ui.notify(`AgentRouter: ${count} model(s) available`, "info");
+			ctx.ui.notify(`AgentRouter catalog: ${count} known model(s)`, "info");
 		},
 	});
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ModelsPublication, ModelsStoreEntry } from "@earendil-works/pi-ai";
 import {
 	type CatalogRefreshContext,
@@ -170,6 +170,46 @@ test("offline/cache-only initialization and an empty key perform no network requ
 	assert.deepEqual(await refresh(context({ credential: { type: "api_key", key: " " } })), [initial]);
 	assert.deepEqual(await refresh(context({ credential: undefined })), [initial]);
 	assert.equal(requests.length, 0);
+});
+
+test("forced refresh without a usable credential fails rather than reporting cached models as refreshed", async () => {
+	const { refresh, requests } = fixture();
+	for (const credential of [undefined, { type: "api_key" as const, key: " " }]) {
+		await assert.rejects(() => refresh(context({ credential, force: true })), /needs an API key/);
+	}
+	assert.equal(requests.length, 0);
+});
+
+test("manual command reports missing auth even when Pi would skip its network refresh phase", async () => {
+	let handler: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+	registerAgentRouter(
+		{
+			registerProvider: () => {},
+			on: () => {},
+			registerCommand: (_name: string, command: { handler: typeof handler }) => {
+				handler = command.handler;
+			},
+		} as unknown as ExtensionAPI,
+		baseUrl,
+		upstream,
+	);
+	let refreshes = 0;
+	const notices: Array<{ message: string; level: string }> = [];
+	await handler!("", {
+		modelRegistry: {
+			getApiKeyForProvider: async () => undefined,
+			refresh: async () => {
+				refreshes++;
+				return { errors: new Map(), aborted: false };
+			},
+			getAll: () => [initial],
+		},
+		ui: { notify: (message: string, level: string) => notices.push({ message, level }) },
+	} as unknown as ExtensionCommandContext);
+	assert.equal(refreshes, 0);
+	assert.equal(notices.length, 1);
+	assert.equal(notices[0].level, "warning");
+	assert.match(notices[0].message, /needs a configured API key/);
 });
 
 test("cache restores offline including empty catalogs, and startup still checks the current key", async () => {
