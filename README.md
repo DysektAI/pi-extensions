@@ -57,6 +57,7 @@ AI Agent Kit already sets this; standalone installations need this setting.
 - **`synthetic`**: Synthetic provider (`api.synthetic.new`). Reads `synthetic` from `auth.json` or `SYNTHETIC_API_KEY`.
 - **`dysektlb-provider`**: Custom dynamic DysektLB gateway provider; reads `auth.json` or `DYSEKTLB_API_KEY` and respects `DYSEKTLB_BASE_URL` / `models.json`.
 - **`freemodel-provider`**: Custom direct GPT/Claude gateway adapter using `FREEMODEL_API_KEY` or the Pi credential store.
+- **`agentrouter-provider`**: Discovers models accessible to the configured key through AgentRouter's `/v1/models`, using Pi's native offline/cache/refresh lifecycle. `/agentrouter-refresh` forces a refresh.
 - **`agentrouter-item-id-replay`**: Keeps portable call IDs and encrypted reasoning while removing resource-scoped replay IDs on AgentRouter Responses requests.
 - **`startup-welcome`**: Dysekt startup branding and resource summary.
 - **`kit-status`**: Optional AI Agent Kit drift notification adapter; uses its separately installed status script and stays quiet when the kit is absent.
@@ -81,6 +82,14 @@ AI Agent Kit already sets this; standalone installations need this setting.
 `extensions/config.ts` manages settings registered dynamically by other extensions via `registerConfigSetting` (`_shared/config-settings.ts`).
 Model roles (`recap`, `title`, `judge`) and ordered subagent fallback chains (`subagentModels`, `agentModels`) persist in `~/.pi/agent/model-roles.json`. Subagents resolve their model chain at spawn time, keeping agent markdown files clean of environment-specific model pins.
 `/config export` (or `alt+e`) copies those model choices plus `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`, `modelThinkingLevels` and registered settings as JSON; `/config import` on another machine (Windows ↔ WSL) pastes it, replaces those choices with the exported set (model and settings choices the export lacks are cleared; registered settings it lacks keep their value), then reloads. Only allowlisted keys and registered settings whose value is one of their declared `values` travel, so API keys and auth never leave the machine; never register a secret as a setting. Model keys are validated, and a failed import restores both files and any settings it changed.
+
+### AgentRouter discovery
+
+Configure `providers.agentrouter` in `models.json` with its base URL, API key source, and required `User-Agent` header. Authentication stays in Pi: the extension uses the resolved credential for discovery without reading or storing keys itself. Set `enabledModels` to include `agentrouter/*` so new models enter the scope automatically.
+
+The authenticated `/v1/models` list is authoritative for account access; the public `/api/pricing` list is not. Discovery runs on session startup and model-picker refresh (at most every five minutes for the same key/endpoint), or immediately with `/agentrouter-refresh`. Pi's model store retains the last good catalog across runs and `--offline` prevents discovery requests. Startup always rechecks access; changing the key or endpoint bypasses the five-minute debounce. HTTP 401/403 withdraw stale models; timeouts, other HTTP failures, and malformed catalogs preserve the last good list.
+
+IDs and supported endpoint types come from AgentRouter. Exact matches in Pi's built-in catalog supply input capabilities, reasoning levels, and token limits. GPT models use Responses, Claude uses Anthropic Messages when advertised, and other OpenAI-compatible models use Chat Completions. Unrecognized chat IDs get conservative text-only, non-reasoning 8K/2K limits; unsupported endpoint types are skipped. Use `modelOverrides` for verified gateway-specific differences. Upstream transport compatibility flags and billing rates are **not** copied: zero costs mean unknown gateway pricing, not necessarily free usage. A single GPT-6.1 Sol bootstrap model covers first startup without a cache; a successful discovery replaces it, even if the accessible list is empty.
 
 ### Provider catalogs
 Pi loads extensions one at a time, so a provider that awaits its `/models` fetch delays every later extension by up to its timeout. `dysektlb`, `morph`, `tokenrouter`, and `synthetic` register their last cached catalog (`~/.pi/agent/.cache/*-models.json`) immediately and refresh it in the background (`_shared/cache-first.ts`); only the first run without a cache waits for the network.
