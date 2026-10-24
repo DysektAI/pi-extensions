@@ -82,6 +82,10 @@ type check. The pinned Pi SDK development dependencies provide the same types
 to the editor; run `npm ci` after updating this checkout.
 The Pi SDK requires Node 22.19 or newer for runtime integration tests. Node 20
 can still run the type check and dependency-free unit tests.
+A scoped `undici@8.12.2` override patches the pinned SDK's development dependency;
+keep it until an SDK update resolves a reviewed, patched version. CI audits the
+full development dependency graph. Do not downgrade the SDK with
+`npm audit fix --force` or omit development dependencies to bypass that gate.
 
 Test files live next to the code they cover as `extensions/<name>/tests.ts` and
 must only import from dependency-free modules (e.g. `pure.ts`, `client.ts`),
