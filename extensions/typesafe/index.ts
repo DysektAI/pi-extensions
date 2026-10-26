@@ -23,6 +23,7 @@ export default function typesafeExtension(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    if (event.messageType !== "user") return;
     if (!pi.getActiveTools().includes("typesafe_ask")) return;
     try {
       const p = await precheck(await config(), event.prompt, ctx.signal);

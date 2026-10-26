@@ -3,6 +3,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import type { BeforeAgentStartEvent, BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import typesafeExtension from "./index.js";
 import { ask, buildRequest, config as resolveConfig, parseAuthKey, precheck, readConfig, resolveApiKey, validateResponse } from "./client.js";
 
 const config = readConfig({ TYPESAFE_API_KEY: "test-only-not-a-real-key" });
@@ -10,6 +12,54 @@ const questions = [{ type: "noul" as const, instructions: "Is this useful?" }];
 const request = buildRequest("hello", questions, config.model);
 const payload = { model: "jev-test", answers: { q1: { type: "noul", noul: 0.8 } }, usage: { input_tokens: 1, output_tokens: 2 } };
 const reply = (body: unknown, status = 200): typeof fetch => async () => new Response(JSON.stringify(body), { status });
+
+test("automatic prompt precheck skips custom starts and preserves user starts", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "typesafe-start-"));
+  const env = {
+    PI_CODING_AGENT_DIR: dir,
+    TYPESAFE_API_KEY: "test-only-not-a-real-key",
+    TYPESAFE_AUTO: "on",
+    TYPESAFE_AUTO_THRESHOLD: "0.65",
+    TYPESAFE_BASE_URL: "https://example.invalid/v1",
+  };
+  const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  let handler: ((event: BeforeAgentStartEvent, ctx: ExtensionContext) => Promise<BeforeAgentStartEventResult | undefined>) | undefined;
+  let toolReads = 0;
+  let requests = 0;
+  const prompt = "Compare these design options";
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    requests++;
+    assert.equal(JSON.parse(init.body as string).state, prompt);
+    return new Response(JSON.stringify({ ...payload, answers: { needs_jev: { type: "noul", noul: 0.8 } } }));
+  });
+  try {
+    Object.assign(process.env, env);
+    typesafeExtension({
+      registerCommand() {},
+      registerTool() {},
+      getActiveTools() { toolReads++; return ["typesafe_ask"]; },
+      on(_type: string, callback: typeof handler) { handler = callback; },
+    } as unknown as ExtensionAPI);
+    assert.ok(handler);
+    const base = { type: "before_agent_start" as const, systemPrompt: "", systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"] };
+    const ctx = {} as ExtensionContext;
+    assert.equal(await handler({ ...base, messageType: "custom", message: {
+      role: "custom", customType: "test", content: "status", display: true, timestamp: 0,
+    } }, ctx), undefined);
+    assert.equal(toolReads, 0, "Custom starts must be skipped before prompt-related work");
+    assert.equal(requests, 0);
+    const result = await handler({ ...base, messageType: "user", prompt }, ctx);
+    assert.equal(toolReads, 1);
+    assert.equal(requests, 1);
+    assert.equal(result?.message?.customType, "typesafe-auto");
+    assert.match(result?.message?.content as string, /probability 0\.80/);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
 
 test("safe defaults and validated configuration", () => {
   assert.equal(readConfig({}).apiKey, "");
