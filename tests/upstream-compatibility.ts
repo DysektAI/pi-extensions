@@ -470,7 +470,12 @@ test("Zen and Go compatibility reaches every upstream wire adapter", async () =>
 					})
 					.result();
 				assert.ok(payload, `${id}/${api}: ${reply.errorMessage}`);
-				const tools = payload.tools ?? payload.config?.tools;
+				const tools =
+					payload.tools ??
+					payload.config?.tools ??
+					payload.input?.flatMap((item: any) =>
+						item.type === "additional_tools" ? item.tools : [],
+					);
 				const names = tools?.flatMap(
 					(t: any) =>
 						t.functionDeclarations?.map((f: any) => f.name) ?? [
