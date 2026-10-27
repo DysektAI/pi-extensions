@@ -42,6 +42,16 @@ test("stock-compatible lock serializes a competing writer and two toggles", asyn
  await Promise.all([s.run("off"),s.run("on")]);
  assert.deepEqual(JSON.parse(readFileSync(file,"utf8")),{keep:true,competing:42,autoUpdateExtensions:true});
 });
+test("in-process toggles retain invocation order despite delayed lock acquisition", async (t) => {
+ const file=join(dir,"settings.json");writeFileSync(file,'{"keep":true}');
+ const realLock=lockfile.lock;let calls=0;
+ t.mock.method(lockfile,"lock",async (file:string,options:any)=>{
+  if(calls++===0)await new Promise(r=>setTimeout(r,40));
+  return realLock(file,options);
+ });
+ const s=setup({});await Promise.all([s.run("off"),s.run("on")]);
+ assert.equal(JSON.parse(readFileSync(file,"utf8")).autoUpdateExtensions,true);
+});
 test("cross-process toggles preserve a concurrent stock-compatible writer",async()=>{
  const file=join(dir,"settings.json");writeFileSync(file,'{"keep":true}');
  const child=spawn(process.execPath,["--input-type=module","-e",`import lockfile from 'proper-lockfile'; import {readFileSync,writeFileSync} from 'node:fs'; const release=await lockfile.lock(process.argv[1],{realpath:false}); const s=JSON.parse(readFileSync(process.argv[1],'utf8')); process.stdout.write('locked\\n'); await new Promise(r=>setTimeout(r,120)); s.child=42;writeFileSync(process.argv[1],JSON.stringify(s));await release();`,file],{cwd:process.cwd(),stdio:["ignore","pipe","pipe"]});

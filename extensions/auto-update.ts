@@ -37,7 +37,15 @@ function readSettings(): Record<string, unknown> {
 	return settings as Record<string, unknown>;
 }
 
-async function setEnabled(on: boolean): Promise<boolean> {
+let settingsWriteQueue: Promise<void> = Promise.resolve();
+function setEnabled(on: boolean): Promise<boolean> {
+	// Cross-process locking provides exclusion, not FIFO order within this runtime.
+	const result = settingsWriteQueue.then(() => setEnabledLocked(on));
+	settingsWriteQueue = result.then(() => undefined, () => undefined);
+	return result;
+}
+
+async function setEnabledLocked(on: boolean): Promise<boolean> {
 	let release: (() => Promise<void>) | undefined;
 	let ok = false;
 	try {
