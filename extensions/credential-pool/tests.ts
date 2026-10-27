@@ -16,7 +16,7 @@ async function setup(keys: any[], response: () => Promise<Response>) {
  writeFileSync(join(dir,"credential-pool","pools.json"),JSON.stringify({pools:{"openai-codex":{type:"oauth",keys}}}));
  const pi: any = { registerProvider: (...args: any[]) => registrations.push(args), on: (name: string, fn: any) => handlers.set(name,fn), registerCommand: (name: string, command: any) => commands.set(name,command) };
  const ctx: any = {model:{provider:"openai-codex"},modelRegistry:{getProvider: () => undefined},ui:{notify:(s:string)=>notices.push(s),setStatus:()=>{}}};
- try { await extension(pi); } catch(e) { restore(); throw e; }
+ try { await extension(pi, {configPath:join(dir,"credential-pool","pools.json")}); } catch(e) { restore(); throw e; }
  function restore() { if(oldDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR=oldDir; globalThis.fetch=oldFetch; console.error=oldError; }
  return {registrations,notices,logs,ctx,handlers,commands,restore};
 }
@@ -52,5 +52,5 @@ test("malformed pool config parser does not echo credentials",async()=>{
  const oldDir=process.env.PI_CODING_AGENT_DIR,oldError=console.error;const logs:string[]=[];
  process.env.PI_CODING_AGENT_DIR=dir;console.error=(...args:any[])=>logs.push(args.join(" "));
  writeFileSync(join(dir,"credential-pool","pools.json"),'{"access":"synthetic-secret",');
- try {await extension({} as any);assert.doesNotMatch(logs.join(" "),/synthetic-secret/);}finally{console.error=oldError;if(oldDir===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=oldDir;}
+ try {await extension({} as any,{configPath:join(dir,"credential-pool","pools.json")});assert.doesNotMatch(logs.join(" "),/synthetic-secret/);}finally{console.error=oldError;if(oldDir===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=oldDir;}
 });

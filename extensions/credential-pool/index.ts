@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { registerPoolKey } from "../_shared/provider-key.js";
 
@@ -262,7 +262,8 @@ function formatDuration(ms: number): string {
  * git install is replaced on update. The in-package location is still read for
  * existing setups, with a one-time hint to move it.
  */
-function resolvePoolsConfigPath(): string | undefined {
+async function resolvePoolsConfigPath(): Promise<string | undefined> {
+	const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
 	const agentDir = getAgentDir();
 	const preferred = path.join(agentDir, "credential-pool", "pools.json");
 	if (fs.existsSync(preferred)) return preferred;
@@ -275,8 +276,9 @@ function resolvePoolsConfigPath(): string | undefined {
 
 // ─── Extension ───────────────────────────────────────────────────────
 
-export default async function (pi: ExtensionAPI) {
-	const configPath = resolvePoolsConfigPath();
+export default async function (pi: ExtensionAPI, options?: { configPath: string }) {
+	// Explicit test storage keeps unit tests independent of SDK runtime imports.
+	const configPath = options?.configPath ?? await resolvePoolsConfigPath();
 	if (!configPath) {
 		return;
 	}
