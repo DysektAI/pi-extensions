@@ -116,8 +116,8 @@ async function refreshOpenAICodexToken(refreshToken: string): Promise<RefreshRes
 		});
 
 		if (!response.ok) {
-			const text = await response.text().catch(() => "");
-			console.error(`[credential-pool] OpenAI refresh failed (${response.status}): ${text || response.statusText}`);
+			// OAuth bodies/status text may contain access/refresh/id tokens or echoed input.
+			console.error(`[credential-pool] OpenAI refresh failed (HTTP ${response.status})`);
 			return null;
 		}
 
@@ -127,8 +127,11 @@ async function refreshOpenAICodexToken(refreshToken: string): Promise<RefreshRes
 			expires_in?: number;
 		};
 
-		if (!json.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
-			console.error(`[credential-pool] OpenAI refresh response missing fields: ${JSON.stringify(json)}`);
+		if (typeof json.access_token !== "string" || !json.access_token ||
+			typeof json.refresh_token !== "string" || !json.refresh_token ||
+			typeof json.expires_in !== "number" || !Number.isFinite(json.expires_in) || json.expires_in <= 30 ||
+			!Number.isFinite(Date.now() + json.expires_in * 1000)) {
+			console.error("[credential-pool] OpenAI refresh response invalid");
 			return null;
 		}
 
@@ -144,10 +147,8 @@ async function refreshOpenAICodexToken(refreshToken: string): Promise<RefreshRes
 			expires: Date.now() + json.expires_in * 1000,
 			accountId,
 		};
-	} catch (error) {
-		console.error(
-			`[credential-pool] OpenAI refresh error: ${error instanceof Error ? error.message : String(error)}`,
-		);
+	} catch {
+		console.error("[credential-pool] OpenAI refresh request failed");
 		return null;
 	}
 }
@@ -240,9 +241,8 @@ function keyLabel(source: KeySource, index: number): string {
 	return `key-${index + 1}`;
 }
 
-function maskKey(key: string): string {
-	if (key.length <= 12) return "***";
-	return `${key.slice(0, 8)}…${key.slice(-4)}`;
+function maskKey(_key: string): string {
+	return "[redacted]";
 }
 
 function formatDuration(ms: number): string {
@@ -284,8 +284,9 @@ export default async function (pi: ExtensionAPI) {
 	let config: PoolsConfig;
 	try {
 		config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-	} catch (err) {
-		console.error(`[credential-pool] Failed to parse pools.json: ${err}`);
+	} catch {
+		// JSON parser errors can quote credential-bearing source text.
+		console.error("[credential-pool] Failed to parse pools.json");
 		return;
 	}
 
@@ -368,10 +369,10 @@ export default async function (pi: ExtensionAPI) {
 
 		// For OAuth: refresh token if expired before registering
 		if (isOAuth) {
-			let registeredIndex = 0;
+			let registeredIndex = -1;
 			for (let i = 0; i < keys.length; i++) {
 				const key = keys[i];
-				if (key.expiresAt && Date.now() >= key.expiresAt) {
+				if (!Number.isFinite(key.expiresAt) || Date.now() >= key.expiresAt! - 30_000) {
 					const refreshed = await refreshOpenAICodexToken(key.refreshToken!);
 					if (refreshed) {
 						key.resolved = refreshed.access;
@@ -388,10 +389,12 @@ export default async function (pi: ExtensionAPI) {
 					break;
 				}
 			}
-			pool.activeIndex = registeredIndex;
-			pi.registerProvider(provider, {
-				apiKey: keys[registeredIndex].resolved,
-			});
+			if (registeredIndex >= 0) {
+				pool.activeIndex = registeredIndex;
+				pi.registerProvider(provider, { apiKey: keys[registeredIndex].resolved });
+			} else {
+				initErrors.push(`${provider}: no usable OAuth credentials — pool unavailable`);
+			}
 		} else {
 			pi.registerProvider(provider, {
 				apiKey: keys[0].resolved,
@@ -402,8 +405,9 @@ export default async function (pi: ExtensionAPI) {
 	// ── Refresh OAuth key ─────────────────────────────────────────────
 
 	async function refreshKeyIfNeeded(pool: ProviderPool, key: KeyState): Promise<boolean> {
-		if (!pool.isOAuth || !key.expiresAt || !key.refreshToken) return true;
-		if (Date.now() < key.expiresAt - 30_000) return true; // 30s buffer
+		if (!pool.isOAuth) return true;
+		if (Number.isFinite(key.expiresAt) && Date.now() < key.expiresAt! - 30_000) return true;
+		if (!key.refreshToken) return false;
 
 		const refreshed = await refreshOpenAICodexToken(key.refreshToken);
 		if (!refreshed) {
@@ -438,20 +442,8 @@ export default async function (pi: ExtensionAPI) {
 			}
 		}
 
-		// All keys rate-limited or unrefreshable — pick the one that unlocks soonest
-		let bestIdx = 0;
-		let bestTime = Infinity;
-		for (let i = 0; i < n; i++) {
-			if (pool.keys[i].rateLimitedUntil < bestTime) {
-				bestTime = pool.keys[i].rateLimitedUntil;
-				bestIdx = i;
-			}
-		}
-		pool.activeIndex = bestIdx;
-		pool.totalRotations++;
-		const key = pool.keys[bestIdx];
-		await refreshKeyIfNeeded(pool, key);
-		return key;
+		// No fallback to expired/unrefreshable or cooling-down credentials.
+		return null;
 	}
 
 	function allKeysRateLimited(pool: ProviderPool): boolean {
@@ -489,7 +481,8 @@ export default async function (pi: ExtensionAPI) {
 			const nextKey = await rotateToNextKey(pool);
 
 			if (nextKey && !allKeysRateLimited(pool)) {
-				registerPoolKey(pi, provider, nextKey.resolved, ctx);
+				// OAuth's native resolver reads pool state; preserve its expiry guard.
+				if (!pool.isOAuth) registerPoolKey(pi, provider, nextKey.resolved, ctx);
 
 				const idx = pool.activeIndex + 1;
 				const total = pool.keys.length;
@@ -501,6 +494,11 @@ export default async function (pi: ExtensionAPI) {
 				);
 				ctx.ui.setStatus("credential-pool", `🔑 ${provider} rotated → key #${idx}/${total}`);
 			} else {
+				if (!allKeysRateLimited(pool)) {
+					ctx.ui.notify(`⚠️ ${provider}: no usable credentials — OAuth refresh failed or keys are unavailable`, "error");
+					ctx.ui.setStatus("credential-pool", `⚠️ ${provider}: credentials unavailable`);
+					return;
+				}
 				const waits = pool.keys.map((k) => k.rateLimitedUntil - Date.now());
 				const minWait = Math.min(...waits);
 
@@ -525,10 +523,11 @@ export default async function (pi: ExtensionAPI) {
 			currentKey.errorCount++;
 
 			if (pool.isOAuth) {
-				// Try refreshing the current key first
+				// Auth rejection invalidates a token even before its recorded expiry.
+				currentKey.expiresAt = 0;
 				const refreshed = await refreshKeyIfNeeded(pool, currentKey);
 				if (refreshed) {
-					registerPoolKey(pi, provider, currentKey.resolved, ctx);
+					// Native OAuth auth resolves the refreshed token from pool state.
 					ctx.ui.notify(`🔑 ${provider}: key #${pool.activeIndex + 1} auth error → token refreshed`, "warning");
 					return;
 				}
@@ -537,7 +536,7 @@ export default async function (pi: ExtensionAPI) {
 			// Refresh failed or not OAuth — rotate
 			const nextKey = await rotateToNextKey(pool);
 			if (nextKey && !allKeysRateLimited(pool)) {
-				registerPoolKey(pi, provider, nextKey.resolved, ctx);
+				if (!pool.isOAuth) registerPoolKey(pi, provider, nextKey.resolved, ctx);
 				ctx.ui.notify(
 					`🔄 ${provider}: key #${pool.keys.indexOf(currentKey) + 1} auth error → rotated to key #${pool.activeIndex + 1}/${pool.keys.length}`,
 					"warning",
@@ -566,10 +565,35 @@ export default async function (pi: ExtensionAPI) {
 			);
 		}
 
-		if (pools.size === 0) return;
-
 		for (const err of initErrors) {
 			ctx.ui.notify(`🔑 credential-pool: ${err}`, "warning");
+		}
+		if (pools.size === 0) return;
+
+		// Guard credentials that expire AFTER startup, without refreshing on selection.
+		// Stock native auth.apiKey.check is side-effect-free; resolve runs on request.
+		for (const [id, pool] of pools) {
+			if (!pool.isOAuth) continue;
+			const provider = ctx.modelRegistry.getProvider?.(id);
+			if (!provider) continue;
+			pi.registerProvider({ ...provider, auth: { ...provider.auth, apiKey: {
+				name: "OAuth credential pool",
+				check: async () => pool.keys.some((key) => key.rateLimitedUntil <= Date.now() &&
+					Number.isFinite(key.expiresAt) && Date.now() < key.expiresAt! - 30_000)
+					? { type: "api_key" as const, source: "credential pool" } : undefined,
+				resolve: async ({ signal }) => {
+					signal.throwIfAborted();
+					for (let offset = 0; offset < pool.keys.length; offset++) {
+						const idx = (pool.activeIndex + offset) % pool.keys.length;
+						const key = pool.keys[idx];
+						if (key.rateLimitedUntil > Date.now() || !(await refreshKeyIfNeeded(pool, key))) continue;
+						signal.throwIfAborted();
+						pool.activeIndex = idx;
+						return { auth: { apiKey: key.resolved }, source: "credential pool" };
+					}
+					throw new Error("OAuth credential pool unavailable");
+				},
+			} } });
 		}
 
 		const summary = [...pools.entries()]
@@ -629,7 +653,7 @@ export default async function (pi: ExtensionAPI) {
 					if (key.rateLimitedUntil > now) {
 						const remaining = key.rateLimitedUntil - now;
 						status = `🔴 limited (${formatDuration(remaining)} left)`;
-					} else if (pool.isOAuth && key.expiresAt && now >= key.expiresAt) {
+					} else if (pool.isOAuth && (!Number.isFinite(key.expiresAt) || now >= key.expiresAt! - 30_000)) {
 						status = `🟡 expired`;
 					} else {
 						status = "🟢 available";
@@ -655,17 +679,16 @@ export default async function (pi: ExtensionAPI) {
 		description: "Clear all credential pool cooldowns and reset to key #1",
 		handler: async (_args, ctx) => {
 			for (const [provider, pool] of pools) {
-				pool.activeIndex = 0;
-				for (const key of pool.keys) {
-					key.rateLimitedUntil = 0;
-				}
+				for (const key of pool.keys) key.rateLimitedUntil = 0;
 				const firstKey = pool.keys[0];
-				if (pool.isOAuth) {
-					await refreshKeyIfNeeded(pool, firstKey);
+				if (!(await refreshKeyIfNeeded(pool, firstKey))) {
+					ctx.ui.notify(`🔑 ${provider}: reset skipped — OAuth refresh failed`, "warning");
+					continue;
 				}
-				registerPoolKey(pi, provider, firstKey.resolved, ctx);
+				pool.activeIndex = 0;
+				if (!pool.isOAuth) registerPoolKey(pi, provider, firstKey.resolved, ctx);
 			}
-			ctx.ui.notify("🔑 All pools reset to key #1, cooldowns cleared.", "info");
+			ctx.ui.notify("🔑 Pool cooldowns cleared; unusable OAuth keys were not selected.", "info");
 			ctx.ui.setStatus(
 				"credential-pool",
 				`🔑 ${[...pools.entries()].map(([p, pool]) => `${p}: ${pool.keys.length} keys`).join(", ")}`,
