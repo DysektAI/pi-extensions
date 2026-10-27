@@ -61,6 +61,17 @@ test("automatic prompt precheck skips custom starts and preserves user starts", 
   }
 });
 
+test("factory registration does not perform a model call or read active tools", (t) => {
+  let registered = 0;
+  t.mock.method(globalThis, "fetch", async () => { throw new Error("Factory must not call an API"); });
+  typesafeExtension({
+    registerCommand() {}, on() {},
+    registerTool() { registered++; },
+    getActiveTools() { throw new Error("Factory must not inspect session tools"); },
+  } as unknown as ExtensionAPI);
+  assert.equal(registered, 1);
+});
+
 test("safe defaults and validated configuration", () => {
   assert.equal(readConfig({}).apiKey, "");
   assert.equal(readConfig({}).auto, false);

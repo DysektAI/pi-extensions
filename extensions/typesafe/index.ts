@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { truncateHead } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { ask, buildRequest, config, precheck } from "./client.js";
@@ -62,6 +61,8 @@ export default function typesafeExtension(pi: ExtensionAPI) {
     async execute(_id, params, signal) {
       const settings = await config();
       const result = await ask(settings, buildRequest(params.state, params.questions, params.model ?? settings.model), signal);
+      // Stock SDK runtime needs Node 22.19+; do not load it for pure/factory tests.
+      const { truncateHead } = await import("@earendil-works/pi-coding-agent");
       const output = truncateHead(JSON.stringify({ model: result.model, answers: result.answers }, null, 2));
       return {
         content: [{ type: "text", text: output.content + (output.truncated ? "\n[Output truncated. Ask fewer questions per call to retrieve all answers.]" : "") }],
