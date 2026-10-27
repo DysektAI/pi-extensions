@@ -25,7 +25,7 @@ import { getRoleValue, readModelRolesFile, setRoleValue } from "../_shared/model
 import { registerConfigSetting } from "../_shared/config-settings.ts";
 // The TUI picker test constructs core's real ModelSelectorComponent, which
 // needs @earendil-works/pi-coding-agent resolvable (at pi runtime it always
-// is; for tests, symlink pi-fork's workspace into node_modules — gitignored).
+// is; for tests, run npm ci to install the pinned stock SDK dependencies).
 // Every other test runs unconditionally.
 let hasCoreComponent = false;
 try {
