@@ -281,19 +281,21 @@ function settingsPath(): string {
 	return join(agentDir(), "settings.json");
 }
 
-/** Read enabledModels patterns from settings.json (undefined when unset/unreadable). */
+/** Read enabledModels patterns (undefined only when absent; invalid settings throw). */
 export function getEnabledModelPatterns(): string[] | undefined {
 	const path = settingsPath();
 	if (!existsSync(path)) return undefined;
 	try {
-		const data = JSON.parse(readFileSync(path, "utf-8")) as { enabledModels?: unknown };
+		const data = JSON.parse(readFileSync(path, "utf-8").replace(/^\uFEFF/, "")) as { enabledModels?: unknown };
+		if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid settings object");
+		if (!Object.hasOwn(data, "enabledModels")) return undefined;
 		const patterns = data.enabledModels;
 		if (Array.isArray(patterns) && patterns.every((p) => typeof p === "string")) {
 			return patterns as string[];
 		}
-		return undefined;
+		throw new Error("Invalid enabledModels scope");
 	} catch {
-		return undefined;
+		throw new Error("Unreadable or malformed enabledModels settings");
 	}
 }
 
@@ -317,7 +319,11 @@ export interface ModelLike {
  * Callers can report each unmatched pattern through onUnmatched.
  */
 export function scopeModels<T extends ModelLike>(models: T[], patterns?: string[], onUnmatched?: (pattern: string) => void): T[] {
-	const pats = patterns ?? getEnabledModelPatterns();
+	let pats: string[] | undefined;
+	try { pats = patterns ?? getEnabledModelPatterns(); } catch {
+		onUnmatched?.("settings.json enabledModels (unreadable or malformed)");
+		return [];
+	}
 	if (!pats) return models;
 
 	const out: T[] = [];
