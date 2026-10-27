@@ -22,7 +22,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/morph/tests.ts extensions/_shared/cache-first.tests.ts extensions/_shared/compaction-threshold.tests.ts tests/discord-package-boundary.ts tests/sdk-dependencies.ts extensions/dysektlb/tests.ts extensions/agentrouter-replay/tests.ts extensions/kit-status/tests.ts",
+    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/morph/tests.ts extensions/_shared/cache-first.tests.ts extensions/_shared/compaction-threshold.tests.ts tests/discord-package-boundary.ts tests/sdk-dependencies.ts extensions/dysektlb/tests.ts extensions/agentrouter-replay/tests.ts extensions/kit-status/tests.ts extensions/auto-update/tests.ts",
     "verify": "npm run typecheck && npm test",
     "test:upstream": "tsx --test tests/upstream-compatibility.ts",
     "typecheck": "tsc --pretty false"
@@ -33,6 +33,7 @@
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@earendil-works/pi-tui": "1.4.0",
     "@types/node": "22.20.5",
+    "@types/proper-lockfile": "4.1.4",
     "tsx": "^4.23.12",
     "typebox": "1.3.27",
     "typescript": "6.0.3"
@@ -59,5 +60,8 @@
     "@earendil-works/pi-coding-agent@1.4.0": {
       "undici": "8.12.2"
     }
+  },
+  "dependencies": {
+    "proper-lockfile": "4.1.2"
   }
 }
