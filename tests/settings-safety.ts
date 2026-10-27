@@ -4,7 +4,8 @@ import {mkdtempSync,mkdirSync,rmSync,writeFileSync,readFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 // Stock runtime integration requires Node 22.19+; pure warning tests run on Node 20.
-const supportsSdk = Number(process.versions.node.split(".")[0]) >= 22;
+import { supportsStockSdk } from "./node-version.ts";
+const supportsSdk = supportsStockSdk(process.versions.node);
 const sdk = supportsSdk ? await import("@earendil-works/pi-coding-agent") : undefined;
 const warningExtension = supportsSdk ? (await import("../extensions/default-model-warning/index.ts")).default : undefined;
 const sdkTest = {skip: supportsSdk ? false : "Stock SDK requires Node 22.19+"};

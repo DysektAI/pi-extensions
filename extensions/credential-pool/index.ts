@@ -579,6 +579,7 @@ export default async function (pi: ExtensionAPI, options?: { configPath: string 
 			const provider = ctx.modelRegistry.getProvider?.(id);
 			if (!provider) continue;
 			pi.registerProvider({ ...provider, auth: { ...provider.auth, apiKey: {
+				...provider.auth.apiKey,
 				name: "OAuth credential pool",
 				check: async () => pool.keys.some((key) => key.rateLimitedUntil <= Date.now() &&
 					Number.isFinite(key.expiresAt) && Date.now() < key.expiresAt! - 30_000)

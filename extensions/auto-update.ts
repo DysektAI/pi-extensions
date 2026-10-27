@@ -39,6 +39,7 @@ function readSettings(): Record<string, unknown> {
 
 async function setEnabled(on: boolean): Promise<boolean> {
 	let release: (() => Promise<void>) | undefined;
+	let ok = false;
 	try {
 		mkdirSync(dirname(SETTINGS_PATH), { recursive: true });
 		// Stock 1.4.0 FileSettingsStorage uses proper-lockfile with realpath:false
@@ -51,12 +52,13 @@ async function setEnabled(on: boolean): Promise<boolean> {
 		const settings = readSettings();
 		settings.autoUpdateExtensions = on;
 		writeFileSync(SETTINGS_PATH, `${JSON.stringify(settings, null, 2)}\n`);
-		return true;
+		ok = true;
 	} catch {
-		return false;
+		ok = false;
 	} finally {
-		try { await release?.(); } catch { return false; }
+		try { await release?.(); } catch { ok = false; }
 	}
+	return ok;
 }
 
 async function runUpdate(pi: ExtensionAPI, ctx: any, signal?: AbortSignal) {

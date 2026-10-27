@@ -34,9 +34,11 @@ test("native availability and request resolution fail closed after expiry",async
  let calls=0;const s=await setup([key(Date.now()+60000)],async()=>{calls++;return new Response("unavailable",{status:500});});
  const now=Date.now;
  try {
-  s.ctx.modelRegistry.getProvider=()=>({id:"openai-codex",auth:{apiKey:{name:"old",resolve:async()=>({auth:{apiKey:"synthetic-old"}})}}});
+  const login=async()=>({type:"api_key",key:"synthetic-login"});
+  s.ctx.modelRegistry.getProvider=()=>({id:"openai-codex",auth:{apiKey:{name:"old",login,resolve:async()=>({auth:{apiKey:"synthetic-old"}})}}});
   await s.handlers.get("session_start")({},s.ctx);
   const native=s.registrations.at(-1)![0];
+  assert.equal(native.auth.apiKey.login,login,"login metadata must survive guard registration");
   assert.ok(await native.auth.apiKey.check({}));assert.equal(calls,0);
   Date.now=()=>now()+120000;
   assert.equal(await native.auth.apiKey.check({}),undefined);assert.equal(calls,0,"selection must not refresh");
