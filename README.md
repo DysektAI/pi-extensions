@@ -63,6 +63,7 @@ AI Agent Kit already sets this; standalone installations need this setting.
 - **`freemodel-provider`**: Custom direct GPT/Claude gateway adapter using `FREEMODEL_API_KEY` or the Pi credential store.
 - **`agentrouter-item-id-replay`**: Keeps portable call IDs and encrypted reasoning while removing resource-scoped replay IDs on AgentRouter Responses requests.
 - **`startup-welcome`**: Dysekt startup branding and resource summary.
+- **`default-model-warning`**: One non-blocking warning per startup/new session when the active model differs from the trusted effective `defaultProvider`/`defaultModel`. Reads settings only; never switches models or calls providers.
 - **`kit-status`**: Optional AI Agent Kit drift notification adapter; uses its separately installed status script and stays quiet when the kit is absent.
 - **`morph-provider`**: Custom Morph adapter with live model discovery, cached and curated fallbacks, and verified chat models only (specialized and unknown IDs are excluded). Pricing is a documented snapshot; a rejected key withdraws the provider. Reads `morph` from `auth.json` or `MORPH_API_KEY`; supports `MORPH_BASE_URL` and `MORPH_MODELS_TIMEOUT_MS`. Moved from AI Agent Kit; remove the old local `morph-provider.ts` copy to avoid duplicate registration.
 - **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
