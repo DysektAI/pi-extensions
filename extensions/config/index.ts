@@ -251,7 +251,11 @@ export default function (pi: ExtensionAPI) {
 		ctx: any,
 		withAuto: boolean,
 	): Promise<ModelIdentity | "auto" | null> {
-		const available = scopeModels(ctx.modelRegistry.getAvailable());
+		const available = ctx.scopedModels?.length
+			? ctx.scopedModels.map((scoped: any) => scoped.model)
+			: scopeModels(ctx.modelRegistry.getAvailable(), undefined, (pattern) => {
+				ctx.ui.notify(`Unmatched model scope: ${pattern}`, "warning");
+			});
 		const currentBase = parseRoleKey(currentKey);
 		const current = currentBase ? `${currentBase.provider}/${currentBase.id}` : undefined;
 		const options: string[] = withAuto ? [AUTO_LABEL] : [];

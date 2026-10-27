@@ -274,7 +274,7 @@ export function setRoleValue(role: ModelRole, value: string | undefined): void {
 
 // ---------------------------------------------------------------------------
 // Model scoping — mirror pi's /model picker, which scopes to settings.json
-// "enabledModels" patterns (exact ids or globs), falling back to all models.
+// "enabledModels" patterns (exact ids or globs). Explicit scopes never widen.
 // ---------------------------------------------------------------------------
 
 function settingsPath(): string {
@@ -312,13 +312,13 @@ export interface ModelLike {
 /**
  * Scope a list of models to the configured enabledModels patterns, mirroring pi's
  * /model picker. Patterns match against "provider/id" or the bare id, support *
- * and ? globs, and ignore any trailing ":thinkingLevel" suffix. When no patterns
- * are configured (or none match), the full list is returned unchanged — exactly
- * like pi falling back to all available models.
+ * and ? globs. Literal IDs win; only validated thinking suffixes may be removed.
+ * An absent scope allows all models; an empty or unmatched scope allows none.
+ * Callers can report each unmatched pattern through onUnmatched.
  */
-export function scopeModels<T extends ModelLike>(models: T[], patterns?: string[]): T[] {
+export function scopeModels<T extends ModelLike>(models: T[], patterns?: string[], onUnmatched?: (pattern: string) => void): T[] {
 	const pats = patterns ?? getEnabledModelPatterns();
-	if (!pats || pats.length === 0) return models;
+	if (!pats) return models;
 
 	const out: T[] = [];
 	const seen = new Set<string>();
@@ -330,25 +330,19 @@ export function scopeModels<T extends ModelLike>(models: T[], patterns?: string[
 	};
 
 	for (const raw of pats) {
-		// Strip an optional ":thinkingLevel" suffix (e.g. "provider/*:high").
-		const colon = raw.lastIndexOf(":");
-		const pattern = colon > 0 && !raw.slice(colon + 1).includes("/") ? raw.slice(0, colon) : raw;
-		if (pattern.includes("*") || pattern.includes("?")) {
+		const match = (pattern: string) => {
 			const re = globToRegExp(pattern);
-			for (const m of models) {
-				if (re.test(`${m.provider}/${m.id}`) || re.test(m.id)) addMatch(m);
-			}
-		} else {
-			const lower = pattern.toLowerCase();
-			for (const m of models) {
-				if (`${m.provider}/${m.id}`.toLowerCase() === lower || m.id.toLowerCase() === lower) addMatch(m);
-			}
+			return models.filter((m) => re.test(`${m.provider}/${m.id}`) || re.test(m.id));
+		};
+		let matches = match(raw);
+		const colon = raw.lastIndexOf(":");
+		if (!matches.length && colon > 0 && isRoleThinking(raw.slice(colon + 1))) {
+			matches = match(raw.slice(0, colon));
 		}
+		if (!matches.length) onUnmatched?.(raw);
+		for (const model of matches) addMatch(model);
 	}
-
-	// If patterns matched nothing (e.g. stale config), don't strand the user with
-	// an empty picker — fall back to the full list like pi does.
-	return out.length > 0 ? out : models;
+	return out;
 }
 
 /** Default user agents dir: ~/.pi/agent/agents (overridable via PI_CODING_AGENT_DIR). */
