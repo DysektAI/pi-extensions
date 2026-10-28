@@ -81,6 +81,8 @@ export function createCatalogRefresh(options: {
 	upstream: readonly Model<Api>[];
 	fetch?: typeof fetch;
 	now?: () => number;
+	/** Called after a network catalog response was published (success or rejected key). */
+	onNetworkResult?: () => void;
 }): (context: CatalogRefreshContext) => Promise<ProviderModelConfig[]> {
 	let current = options.initialModels;
 	let checkedAt: number | undefined;
@@ -154,6 +156,7 @@ export function createCatalogRefresh(options: {
 					current = [];
 					checkedAt = undefined;
 					lastKey = undefined;
+					options.onNetworkResult?.();
 				}
 				console.warn(
 					`[agentrouter-provider] Catalog authentication failed (HTTP ${response.status}); check the configured AgentRouter key.`,
@@ -172,18 +175,36 @@ export function createCatalogRefresh(options: {
 			checkedAt = timestamp;
 			lastKey = context.credential.key;
 			lastBaseUrl = baseUrl;
+			options.onNetworkResult?.();
 		}
 		return current;
 	};
 }
 
-export function registerAgentRouter(pi: ExtensionAPI, baseUrl: string, upstream: readonly Model<Api>[]): void {
+/** Startup refresh attempts; later attempts wait STARTUP_RETRY_MS × attempt. */
+export const STARTUP_REFRESH_ATTEMPTS = 3;
+export const STARTUP_RETRY_MS = 1000;
+
+export function registerAgentRouter(
+	pi: ExtensionAPI,
+	baseUrl: string,
+	upstream: readonly Model<Api>[],
+	retryDelayMs = STARTUP_RETRY_MS,
+): void {
 	const initial = toModel({ id: "gpt-6.1-sol", supported_endpoint_types: ["openai"] }, baseUrl, upstream)!;
+	let networkResults = 0;
 	pi.registerProvider("agentrouter", {
 		name: "AgentRouter",
 		// Omit apiKey, baseUrl, and headers: models.json/Pi resolve those normally.
 		models: [initial],
-		refreshModels: createCatalogRefresh({ baseUrl, initialModels: [initial], upstream }),
+		refreshModels: createCatalogRefresh({
+			baseUrl,
+			initialModels: [initial],
+			upstream,
+			onNetworkResult: () => {
+				networkResults++;
+			},
+		}),
 	});
 	const warn = () =>
 		console.warn(
@@ -191,12 +212,18 @@ export function registerAgentRouter(pi: ExtensionAPI, baseUrl: string, upstream:
 		);
 	pi.on("session_start", (_event, ctx) => {
 		// The registry honors --offline. Don't delay startup on a warm-cache fetch.
-		void ctx.modelRegistry
-			.refresh({ providers: ["agentrouter"] })
-			.then((result) => {
-				if (result.errors.has("agentrouter")) warn();
-			})
-			.catch(warn);
+		// Any provider registration starts an offline registry refresh that
+		// supersedes this provider's in-flight network refresh without an error
+		// (see UPSTREAM_NOTES), so retry until a network result is published.
+		const before = networkResults;
+		const attempt = async (n: number): Promise<void> => {
+			const result = await ctx.modelRegistry.refresh({ providers: ["agentrouter"] });
+			if (result.errors.has("agentrouter")) return warn();
+			if (result.aborted || networkResults > before || n + 1 >= STARTUP_REFRESH_ATTEMPTS) return;
+			await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (n + 1)));
+			return attempt(n + 1);
+		};
+		void attempt(0).catch(warn);
 	});
 	pi.registerCommand("agentrouter-refresh", {
 		description: "Refresh the AgentRouter models accessible to the configured key",

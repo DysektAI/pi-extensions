@@ -350,3 +350,72 @@ test("manual command warns when the refresh leaves no AgentRouter models (reject
 		if (level === "warning") assert.match(notices[0].message, /0 models available/);
 	}
 });
+
+test("startup refresh retries when a superseding registry refresh drops the network phase", async () => {
+	let registered: ProviderConfig | undefined;
+	let onStart: ((event: unknown, ctx: unknown) => void) | undefined;
+	// Stub before registration: the catalog captures the global fetch when created.
+	const original = globalThis.fetch;
+	let fetches = 0;
+	globalThis.fetch = (async () => {
+		fetches++;
+		return new Response(JSON.stringify(payload), { status: 200 });
+	}) as typeof fetch;
+	registerAgentRouter(
+		{
+			registerProvider: (_id: string, config: ProviderConfig) => {
+				registered = config;
+			},
+			on: (_event: string, handler: typeof onStart) => {
+				onStart = handler;
+			},
+			registerCommand: () => {},
+		} as unknown as ExtensionAPI,
+		baseUrl,
+		upstream,
+		1,
+	);
+	try {
+		let calls = 0;
+		const done = new Promise<void>((resolve) => {
+			onStart!({}, {
+				modelRegistry: {
+					refresh: async () => {
+						calls++;
+						// First call: superseded (no network phase). Second: network runs.
+						if (calls >= 2) await registered!.refreshModels!(context());
+						if (calls >= 2) setTimeout(resolve, 5);
+						return { errors: new Map(), aborted: false };
+					},
+				},
+			});
+		});
+		await done;
+		await new Promise((r) => setTimeout(r, 20));
+		assert.equal(calls, 2);
+		assert.equal(fetches, 1);
+	} finally {
+		globalThis.fetch = original;
+	}
+});
+
+test("startup refresh stops after bounded attempts when no network result arrives (offline)", async () => {
+	let onStart: ((event: unknown, ctx: unknown) => void) | undefined;
+	registerAgentRouter(
+		{
+			registerProvider: () => {},
+			on: (_event: string, handler: typeof onStart) => {
+				onStart = handler;
+			},
+			registerCommand: () => {},
+		} as unknown as ExtensionAPI,
+		baseUrl,
+		upstream,
+		1,
+	);
+	let calls = 0;
+	onStart!({}, { modelRegistry: { refresh: async () => (calls++, { errors: new Map(), aborted: false }) } });
+	await new Promise((r) => setTimeout(r, 50));
+	assert.equal(calls, 3);
+});
+
