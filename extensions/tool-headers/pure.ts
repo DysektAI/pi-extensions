@@ -7,7 +7,6 @@
 
 /** Built-in tools whose call line is rewritten. */
 export const HEADER_TOOLS = ["bash", "powershell", "read", "edit", "write", "grep", "find", "ls"] as const;
-export type HeaderTool = (typeof HEADER_TOOLS)[number];
 
 /** Tools whose first argument is a file path (recoloured as a link). */
 export const PATH_TOOLS: ReadonlySet<string> = new Set(["read", "edit", "write", "ls"]);
