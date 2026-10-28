@@ -52,6 +52,7 @@ import {
 	isChatModel,
 	isReasoningModel,
 	isServableModel,
+	needsThinkingTokenBudget,
 	supportsImages,
 	titleize,
 	toPiModel,
@@ -450,6 +451,25 @@ describe("toPiModel", () => {
 		assert.equal(model.thinkingLevelMap, undefined);
 	});
 
+	it("hides the rejected high effort for Qwen3.8-Max and requests a thinking budget", () => {
+		const model = toPiModel({ id: "qwen/qwen3.8-max", supported_endpoint_types: ["openai", "openai-response"] });
+		assert.deepEqual(model.thinkingLevelMap, { off: null, minimal: null, low: "low", medium: "medium", high: null, xhigh: "xhigh", max: null });
+		assert.equal((model.compat as { supportsThinkingTokenBudget?: boolean }).supportsThinkingTokenBudget, true);
+	});
+
+	it("requests a thinking budget for Kimi K3 only, not newer siblings", () => {
+		assert.equal(needsThinkingTokenBudget("moonshotai/kimi-k3"), true);
+		assert.equal(needsThinkingTokenBudget("moonshotai/kimi-k3.1-pro"), false);
+		const other = toPiModel({ id: "z-ai/glm-5.3", supported_endpoint_types: ["openai"] });
+		assert.equal("supportsThinkingTokenBudget" in other.compat, false);
+		assert.equal(getThinkingLevelMap("qwen/qwen3.8-flash"), undefined);
+	});
+
+	it("treats GLM-5.3 Flash as image-capable despite its Text tag", () => {
+		assert.equal(supportsImages("z-ai/glm-5.3-flash"), true);
+		assert.equal(supportsImages("z-ai/glm-5.3"), false);
+	});
+
 	it("marks a text-only, non-multimodal chat model as text-only", () => {
 		const model = toPiModel({ id: "openai/gpt-oss-120b", supported_endpoint_types: ["openai"] });
 		assert.equal(model.reasoning, true);
@@ -499,4 +519,55 @@ describe("tokenrouter provider refresh", () => {
 			}
 		});
 	}
+
+	async function withAgentDir(run: (dir: string, warnings: string[], registered: string[]) => Promise<void>, fetchImpl: typeof fetch) {
+		const dir = await mkdtemp(join(tmpdir(), "tokenrouter-test-"));
+		const env = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, TOKENROUTER_API_KEY: process.env.TOKENROUTER_API_KEY };
+		const originalFetch = globalThis.fetch;
+		const originalWarn = console.warn;
+		const warnings: string[] = [];
+		const registered: string[] = [];
+		Object.assign(process.env, { HOME: dir, PI_CODING_AGENT_DIR: dir });
+		delete process.env.TOKENROUTER_API_KEY;
+		console.warn = (message) => warnings.push(String(message));
+		globalThis.fetch = fetchImpl;
+		try {
+			await run(dir, warnings, registered);
+		} finally {
+			globalThis.fetch = originalFetch;
+			console.warn = originalWarn;
+			for (const [key, value] of Object.entries(env)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+
+	it("registers zero models and warns once when offline with no cache (no curated fallback)", async () => {
+		await withAgentDir(async (_dir, warnings, registered) => {
+			process.env.TOKENROUTER_API_KEY = "test-key";
+			const pi = { registerProvider: (name: string) => registered.push(name), unregisterProvider: () => {} };
+			const { refresh } = await tokenrouterProvider(pi as any);
+			await refresh;
+			assert.deepEqual(registered, []);
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0], /no cache is available/);
+		}, async () => { throw new TypeError("fetch failed"); });
+	});
+
+	it("reads the key from auth.json under PI_CODING_AGENT_DIR and registers exactly one provider", async () => {
+		let seenAuth = "";
+		await withAgentDir(async (dir, _warnings, registered) => {
+			await writeFile(join(dir, "auth.json"), JSON.stringify({ tokenrouter: { type: "api_key", key: "dir-key" } }));
+			const pi = { registerProvider: (name: string) => registered.push(name), unregisterProvider: () => {} };
+			const { refresh } = await tokenrouterProvider(pi as any);
+			await refresh;
+			assert.deepEqual(registered, ["tokenrouter"]);
+			assert.equal(seenAuth, "Bearer dir-key");
+		}, async (_url, init) => {
+			seenAuth = new Headers(init?.headers).get("authorization") ?? "";
+			return new Response(JSON.stringify({ data: [model] }), { status: 200 });
+		});
+	});
 });

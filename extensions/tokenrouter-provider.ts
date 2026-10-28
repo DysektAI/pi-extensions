@@ -13,10 +13,12 @@
  * current Claude generations reject.
  *
  * Auth resolution order:
- * 1. `tokenrouter` entry in ~/.pi/agent/auth.json (persistent, no env var needed)
+ * 1. `tokenrouter` entry in the agent dir's auth.json (PI_CODING_AGENT_DIR or ~/.pi/agent)
  * 2. TOKENROUTER_API_KEY environment variable
  *
- * When neither is set, the provider is skipped entirely.
+ * When neither is set, the provider is skipped entirely. There is deliberately no
+ * curated offline fallback: with no cache and no network, zero models register
+ * and one warning explains why (no invented catalog entries).
  *
  * Resilience: never throws. The last-known model list cached on disk registers
  * immediately and a background fetch replaces it (see _shared/cache-first.ts),
@@ -41,13 +43,14 @@ import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from
 const BASE_URL = "https://api.tokenrouter.com/v1";
 const FETCH_TIMEOUT_MS = 10000;
 
+function agentDir(): string {
+	return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+}
+
 /** Resolve the TokenRouter API key: auth.json first (persistent), then env. */
 async function readApiKey(): Promise<string | undefined> {
 	try {
-		const auth = JSON.parse(await readFile(join(homedir(), ".pi", "agent", "auth.json"), "utf8")) as Record<
-			string,
-			unknown
-		>;
+		const auth = JSON.parse(await readFile(join(agentDir(), "auth.json"), "utf8")) as Record<string, unknown>;
 		const entry = auth.tokenrouter;
 		if (typeof entry === "string") return entry;
 		if (entry && typeof entry === "object" && typeof (entry as { key?: unknown }).key === "string") {
@@ -60,7 +63,7 @@ async function readApiKey(): Promise<string | undefined> {
 }
 
 function cachePath(): string {
-	return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), ".cache", "tokenrouter-models.json");
+	return join(agentDir(), ".cache", "tokenrouter-models.json");
 }
 
 async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {

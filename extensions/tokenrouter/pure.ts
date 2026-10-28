@@ -218,6 +218,9 @@ export const IMAGE_PATTERNS: string[] = [
 	"mimo-v2.6",
 	"mimo-v2.5",
 	"mimo-v2-omni",
+	// GLM-5.3 Flash accepts OpenAI image_url blocks even though GET /models
+	// labels it Text (live-verified in the retired Windows loose provider).
+	"glm-5.3-flash",
 ];
 
 /**
@@ -399,6 +402,12 @@ export const THINKING_LEVEL_MAPS: Array<{ pattern: RegExp; map: Record<string, s
 		pattern: /deepseek/,
 		map: { off: null, minimal: null, low: "low", medium: null, high: "high", max: "max" },
 	},
+	// Qwen3.8-Max rejects reasoning_effort "high"; accepts low/medium/xhigh
+	// (live-verified in the retired Windows loose provider).
+	{
+		pattern: /^qwen\/qwen3\.8-max$/,
+		map: { off: null, minimal: null, low: "low", medium: "medium", high: null, xhigh: "xhigh", max: null },
+	},
 	// Moonshot Kimi K3: off/low/high/max.
 	{
 		pattern: /kimi-k3/,
@@ -475,6 +484,20 @@ function toAnthropicPiModel(model: TokenRouterModel) {
 	};
 }
 
+// ── Thinking token budget ───────────────────────────────────────────────────
+
+/**
+ * vLLM-backed ids that stream reasoning_content and need an explicit thinking
+ * token budget, otherwise the reasoning phase can consume the whole max_tokens.
+ * Exact ids only (live-verified in the retired Windows loose provider); newer
+ * siblings such as kimi-k3.1-pro are not assumed.
+ */
+export const THINKING_TOKEN_BUDGET_MODELS = new Set(["moonshotai/kimi-k3", "qwen/qwen3.8-max"]);
+
+export function needsThinkingTokenBudget(id: string): boolean {
+	return THINKING_TOKEN_BUDGET_MODELS.has(id.toLowerCase());
+}
+
 // ── pi model descriptor ─────────────────────────────────────────────────────
 
 export function toPiModel(model: TokenRouterModel) {
@@ -496,6 +519,7 @@ export function toPiModel(model: TokenRouterModel) {
 			supportsDeveloperRole: false,
 			maxTokensField: getMaxTokensField(id),
 			supportsReasoningEffort: true,
+			...(needsThinkingTokenBudget(id) && { supportsThinkingTokenBudget: true }),
 			// MiMo replays reasoning under `reasoning_content` and needs the field
 			// present on assistant turns — the same compat block pi's built-in
 			// Xiaomi catalog uses for mimo-v2.6. Both shapes probed live on
