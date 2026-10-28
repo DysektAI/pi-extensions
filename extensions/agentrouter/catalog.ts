@@ -214,6 +214,12 @@ export function registerAgentRouter(pi: ExtensionAPI, baseUrl: string, upstream:
 				return;
 			}
 			const count = ctx.modelRegistry.getAll().filter((model) => model.provider === "agentrouter").length;
+			if (count === 0) {
+				// A rejected key publishes an empty catalog without an error; a genuinely
+				// empty catalog looks the same, so the warning covers both causes.
+				ctx.ui.notify("AgentRouter catalog: 0 models available; the key may be rejected or have no model access.", "warning");
+				return;
+			}
 			ctx.ui.notify(`AgentRouter catalog: ${count} known model(s)`, "info");
 		},
 	});

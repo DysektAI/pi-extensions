@@ -32,9 +32,8 @@
  * @see https://docs.tokenrouter.io
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { mkdir, readFile, writeFile } from "fs/promises";
-import { homedir } from "os";
 import { dirname, join } from "path";
 
 import { type CacheFirstResult, nonEmpty, registerCacheFirst, warnStaleCatalog } from "./_shared/cache-first.ts";
@@ -43,14 +42,13 @@ import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from
 const BASE_URL = "https://api.tokenrouter.com/v1";
 const FETCH_TIMEOUT_MS = 10000;
 
-function agentDir(): string {
-	return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-}
+// Pi's own resolution: PI_CODING_AGENT_DIR with ~ expansion, empty means default.
+const authPath = (): string => join(getAgentDir(), "auth.json");
 
 /** Resolve the TokenRouter API key: auth.json first (persistent), then env. */
 async function readApiKey(): Promise<string | undefined> {
 	try {
-		const auth = JSON.parse(await readFile(join(agentDir(), "auth.json"), "utf8")) as Record<string, unknown>;
+		const auth = JSON.parse(await readFile(authPath(), "utf8")) as Record<string, unknown>;
 		const entry = auth.tokenrouter;
 		if (typeof entry === "string") return entry;
 		if (entry && typeof entry === "object" && typeof (entry as { key?: unknown }).key === "string") {
@@ -63,7 +61,7 @@ async function readApiKey(): Promise<string | undefined> {
 }
 
 function cachePath(): string {
-	return join(agentDir(), ".cache", "tokenrouter-models.json");
+	return join(getAgentDir(), ".cache", "tokenrouter-models.json");
 }
 
 async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {
@@ -72,7 +70,7 @@ async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
 	if (!response.ok) {
-		const hint = response.status === 401 ? "; update the tokenrouter entry in ~/.pi/agent/auth.json" : "";
+		const hint = response.status === 401 ? `; update the tokenrouter entry in ${authPath()}` : "";
 		throw Object.assign(new Error(`HTTP ${response.status}${hint}`), { status: response.status });
 	}
 	const models = extractModels(await response.json()).filter(isServableModel);
@@ -119,7 +117,7 @@ export default async function tokenrouterProvider(pi: ExtensionAPI): Promise<Cac
 	const apiKey = await readApiKey();
 	if (!apiKey) {
 		console.warn(
-			"[tokenrouter-provider] No API key found — set TOKENROUTER_API_KEY or add a `tokenrouter` entry to ~/.pi/agent/auth.json. TokenRouter models will not be listed.",
+			`[tokenrouter-provider] No API key found — set TOKENROUTER_API_KEY or add a \`tokenrouter\` entry to ${authPath()}. TokenRouter models will not be listed.`,
 		);
 		return {};
 	}

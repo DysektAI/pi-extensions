@@ -321,3 +321,32 @@ test("aborted or superseded publications never change the live fallback", async 
 	assert.deepEqual(await refresh({ ...ctx, publish: async () => false }), [initial]);
 	assert.deepEqual(await refresh(context({ allowNetwork: false })), [initial]);
 });
+
+test("manual command warns when the refresh leaves no AgentRouter models (rejected key or empty catalog)", async () => {
+	let handler: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+	registerAgentRouter(
+		{
+			registerProvider: () => {},
+			on: () => {},
+			registerCommand: (_name: string, command: { handler: typeof handler }) => {
+				handler = command.handler;
+			},
+		} as unknown as ExtensionAPI,
+		baseUrl,
+		upstream,
+	);
+	for (const [models, level] of [[[], "warning"], [[initial], "info"]] as const) {
+		const notices: Array<{ message: string; level: string }> = [];
+		await handler!("", {
+			modelRegistry: {
+				getApiKeyForProvider: async () => "rejected-key",
+				refresh: async () => ({ errors: new Map(), aborted: false }),
+				getAll: () => models,
+			},
+			ui: { notify: (message: string, level: string) => notices.push({ message, level }) },
+		} as unknown as ExtensionCommandContext);
+		assert.equal(notices.length, 1);
+		assert.equal(notices[0].level, level);
+		if (level === "warning") assert.match(notices[0].message, /0 models available/);
+	}
+});

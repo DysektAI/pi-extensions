@@ -570,4 +570,27 @@ describe("tokenrouter provider refresh", () => {
 			return new Response(JSON.stringify({ data: [model] }), { status: 200 });
 		});
 	});
+
+	for (const [label, envValue, authDir] of [
+		["expands ~ in PI_CODING_AGENT_DIR", "~/custom-agent", ["custom-agent"]],
+		["treats an empty PI_CODING_AGENT_DIR as the default agent dir", "", [".pi", "agent"]],
+	] as const) {
+		it(label, { skip: process.platform === "win32" ? "homedir() ignores HOME on Windows" : false }, async () => {
+			let seenAuth = "";
+			await withAgentDir(async (dir, _warnings, registered) => {
+				process.env.PI_CODING_AGENT_DIR = envValue;
+				await mkdir(join(dir, ...authDir), { recursive: true });
+				await writeFile(join(dir, ...authDir, "auth.json"), JSON.stringify({ tokenrouter: "resolved-key" }));
+				const pi = { registerProvider: (name: string) => registered.push(name), unregisterProvider: () => {} };
+				const { refresh } = await tokenrouterProvider(pi as any);
+				await refresh;
+				assert.deepEqual(registered, ["tokenrouter"]);
+				assert.equal(seenAuth, "Bearer resolved-key");
+			}, async (_url, init) => {
+				seenAuth = new Headers(init?.headers).get("authorization") ?? "";
+				return new Response(JSON.stringify({ data: [model] }), { status: 200 });
+			});
+		});
+	}
 });
+
