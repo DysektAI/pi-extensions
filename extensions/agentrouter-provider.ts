@@ -5,12 +5,12 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveAgentDir } from "./_shared/agent-dir.ts";
 import { registerAgentRouter } from "./agentrouter/catalog.ts";
 
 export default async function agentrouterProvider(pi: ExtensionAPI): Promise<void> {
-	const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+	const agentDir = resolveAgentDir();
 	let baseUrl: string;
 	try {
 		const config = JSON.parse(await readFile(join(agentDir, "models.json"), "utf8"));

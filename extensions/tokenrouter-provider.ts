@@ -32,10 +32,11 @@
  * @see https://docs.tokenrouter.io
  */
 
-import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 
+import { resolveAgentDir } from "./_shared/agent-dir.ts";
 import { type CacheFirstResult, nonEmpty, registerCacheFirst, warnStaleCatalog } from "./_shared/cache-first.ts";
 import { extractModels, isServableModel, type TokenRouterModel, toPiModel } from "./tokenrouter/pure.ts";
 
@@ -43,7 +44,7 @@ const BASE_URL = "https://api.tokenrouter.com/v1";
 const FETCH_TIMEOUT_MS = 10000;
 
 // Pi's own resolution: PI_CODING_AGENT_DIR with ~ expansion, empty means default.
-const authPath = (): string => join(getAgentDir(), "auth.json");
+const authPath = (): string => join(resolveAgentDir(), "auth.json");
 
 /** Resolve the TokenRouter API key: auth.json first (persistent), then env. */
 async function readApiKey(): Promise<string | undefined> {
@@ -61,7 +62,7 @@ async function readApiKey(): Promise<string | undefined> {
 }
 
 function cachePath(): string {
-	return join(getAgentDir(), ".cache", "tokenrouter-models.json");
+	return join(resolveAgentDir(), ".cache", "tokenrouter-models.json");
 }
 
 async function fetchModels(apiKey: string): Promise<TokenRouterModel[]> {
