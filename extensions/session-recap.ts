@@ -96,6 +96,12 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
+	pi.on("session_shutdown", () => {
+		if (pendingTimer) clearTimeout(pendingTimer);
+		pendingTimer = null;
+		pendingMessages = null;
+	});
+
 	pi.on("agent_start", () => {
 		requestStart = Date.now();
 		if (pendingTimer) {
@@ -106,7 +112,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", (event, ctx) => {
-		if (!enabled) return;
+		// Recaps are an interactive affordance; print/JSON/RPC runs must exit promptly.
+		if (!enabled || !ctx.hasUI) return;
 		const elapsed = requestStart > 0 ? Date.now() - requestStart : 0;
 
 		if (pendingTimer) {
@@ -197,6 +204,8 @@ export default function (pi: ExtensionAPI) {
 				}
 			})();
 		}, RECAP_DELAY_MS);
+		// Never keep the process alive just to show a recap.
+		pendingTimer.unref?.();
 	});
 
 	pi.registerEntryRenderer("session-recap", (entry, _options, theme) => {
