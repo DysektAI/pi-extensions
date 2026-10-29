@@ -31,7 +31,25 @@ import {
 	formatOpenCodeSessionId,
 	OPENCODE_CLIENT_USER_AGENT,
 } from "../extensions/opencode-compat/compat.js";
-import { registerPoolKey } from "../extensions/_shared/provider-key.js";
+/** Give a native provider a fixed key while keeping its stream handlers (test fixture). */
+function setNativeKey(registry: any, id: string, key: string) {
+	const provider = registry.getProvider(id);
+	registry.registerProvider({
+		...provider,
+		auth: {
+			...provider.auth,
+			apiKey: {
+				...provider.auth.apiKey,
+				name: "test key",
+				check: undefined,
+				resolve: async ({ signal }: { signal: AbortSignal }) => {
+					signal.throwIfAborted();
+					return { auth: { apiKey: key }, source: "test" };
+				},
+			},
+		},
+	});
+}
 const root = process.env.PI_UPSTREAM_ROOT;
 if (!root)
 	throw new Error(
@@ -137,57 +155,6 @@ test("compatibility covers both stream APIs and tool removals without mutating i
 		formatOpenCodeSessionId("01923456-789a-7bcd-8ef0-123456789abd"),
 	);
 });
-test("native provider and custom models survive repeated credential rotation", async () => {
-	const modelsPath = join(temp, "models.json");
-	writeFileSync(
-		modelsPath,
-		JSON.stringify({
-			providers: {
-				opencode: {
-					models: [{ ...model, id: "custom-test" }],
-					baseUrl: model.baseUrl,
-				},
-			},
-		}),
-	);
-	const registry = new ModelRegistry(
-		await ModelRuntime.create({
-			credentials: AuthStorage.inMemory(),
-			modelsPath,
-			allowModelNetwork: false,
-		}),
-	);
-	const original = registry.getProvider("opencode")!;
-	let capture: any;
-	const fn = (_model: any, ctx: any, options: any) => {
-		capture = { ctx, options };
-		return completed();
-	};
-	registry.registerProvider({
-		...original,
-		...withOpenCodeCompat({ stream: fn, streamSimple: fn }),
-	});
-	const pi = {
-		registerProvider: (...args: any[]) =>
-			registry.registerProvider(...(args as [any])),
-	};
-	for (const key of ["test-key-1", "test-key-2", "test-key-1"]) {
-		registerPoolKey(pi as any, "opencode", key, {
-			modelRegistry: registry,
-		} as any);
-		assert.ok(registry.find("opencode", "custom-test"));
-		const auth = await registry.getProviderAuth("opencode");
-		assert.equal(auth?.auth.apiKey, key);
-		const result = await registry
-			.streamSimple(registry.find("opencode", "custom-test")!, context, {
-				sessionId: "rotation",
-			})
-			.result();
-		assert.equal(result.stopReason, "stop");
-		assert.equal(capture.options.apiKey, key);
-		assert.equal(getCurrentTools(capture.ctx.messages).length, 2);
-	}
-});
 test("real upstream adapter sends compat headers/tools and receives a streamed answer", async () => {
 	const registry = new ModelRegistry(
 		await ModelRuntime.create({
@@ -198,12 +165,7 @@ test("real upstream adapter sends compat headers/tools and receives a streamed a
 	);
 	const original = registry.getProvider("opencode")!;
 	registry.registerProvider({ ...original, ...withOpenCodeCompat(original) });
-	registerPoolKey(
-		{ registerProvider: (p: any) => registry.registerProvider(p) } as any,
-		"opencode",
-		"fake-test-key",
-		{ modelRegistry: registry } as any,
-	);
+	setNativeKey(registry, "opencode", "fake-test-key");
 	const previous = globalThis.fetch;
 	let captured: any;
 	globalThis.fetch = async (input: any, init: any) => {
@@ -264,98 +226,6 @@ test("all extension entrypoints load through the actual upstream extension loade
 	console.log(`Loaded ${entrypoints.length} extensions on stock upstream`);
 });
 
-test("real credential-pool events preserve compatibility in either extension load order", async () => {
-	mkdirSync(join(temp, "credential-pool"), { recursive: true });
-	writeFileSync(
-		join(temp, "credential-pool", "pools.json"),
-		JSON.stringify({
-			pools: {
-				opencode: {
-					keys: [{ value: "fake-pool-1" }, { value: "fake-pool-2" }],
-				},
-			},
-		}),
-	);
-	const paths = [
-		resolve("extensions/credential-pool/index.ts"),
-		resolve("extensions/opencode-compat/index.ts"),
-	];
-	for (const order of [paths, [...paths].reverse()]) {
-		const runtime = await ModelRuntime.create({
-			credentials: AuthStorage.inMemory(),
-			modelsPath: null,
-			allowModelNetwork: false,
-		});
-		const registry = new ModelRegistry(runtime);
-		const result = await loadExtensions(order, resolve("."));
-		assert.deepEqual(result.errors, []);
-		for (const { name, config } of result.runtime.pendingProviderRegistrations)
-			registry.registerProvider(name, config);
-		result.runtime.registerProvider = (id: any, config: any) =>
-			registry.registerProvider(id, config);
-		result.runtime.registerNativeProvider = (p: any) =>
-			registry.registerProvider(p);
-		const ctx: any = {
-			model: { provider: "opencode" },
-			modelRegistry: registry,
-			ui: { notify() {}, setStatus() {} },
-		};
-		const emit = async (type: string, event: any) => {
-			for (const extension of result.extensions)
-				for (const handler of extension.handlers.get(type) ?? [])
-					await handler({ type, ...event }, ctx);
-		};
-		await emit("session_start", {});
-		assert.equal(
-			(await registry.getProviderAuth("opencode"))?.auth.apiKey,
-			"fake-pool-1",
-		);
-		await emit("after_provider_response", {
-			status: 429,
-			headers: { "retry-after": "1" },
-		});
-		assert.equal(
-			(await registry.getProviderAuth("opencode"))?.auth.apiKey,
-			"fake-pool-2",
-		);
-		let captured: any;
-		const previous = globalThis.fetch;
-		globalThis.fetch = async (input: any, init: any) => {
-			const req = input instanceof Request ? input : new Request(input, init);
-			captured = { headers: req.headers, body: await req.json() };
-			return new Response(
-				'data: {"id":"test","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-				{ headers: { "content-type": "text/event-stream" } },
-			);
-		};
-		try {
-			const response = await registry
-				.streamSimple(model as any, context, { sessionId: "pool" })
-				.result();
-			assert.equal(response.stopReason, "stop", response.errorMessage);
-			assert.equal(captured.headers.get("authorization"), "Bearer fake-pool-2");
-			assert.match(captured.headers.get("user-agent"), /^opencode\//);
-			assert.equal(captured.body.tools.length, 2);
-			await emit("after_provider_response", { status: 401, headers: {} });
-			const pool = result.extensions.find((e: any) =>
-				e.path.includes("credential-pool"),
-			);
-			await pool.commands.get("pool-reset").handler("", ctx);
-			assert.equal(
-				(await registry.getProviderAuth("opencode"))?.auth.apiKey,
-				"fake-pool-1",
-			);
-			const again = await registry
-				.streamSimple(model as any, context, { sessionId: "pool" })
-				.result();
-			assert.equal(again.stopReason, "stop");
-			assert.equal(captured.body.tools.length, 2);
-		} finally {
-			globalThis.fetch = previous;
-		}
-	}
-	rmSync(join(temp, "credential-pool"), { recursive: true });
-});
 test("actual SDK compaction retains compatibility and session attribution", async () => {
 	const runtime = await ModelRuntime.create({
 		credentials: AuthStorage.inMemory(),
@@ -367,12 +237,7 @@ test("actual SDK compaction retains compatibility and session attribution", asyn
 		...registry.getProvider("opencode")!,
 		...withOpenCodeCompat(registry.getProvider("opencode")!),
 	});
-	registerPoolKey(
-		{ registerProvider: (p: any) => registry.registerProvider(p) } as any,
-		"opencode",
-		"fake-summary-key",
-		{ modelRegistry: registry } as any,
-	);
+	setNativeKey(registry, "opencode", "fake-summary-key");
 	const settingsManager = SettingsManager.inMemory({});
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: temp,

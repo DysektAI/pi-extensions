@@ -2,4 +2,3 @@ node_modules/
 .DS_Store
 *.log
 # Never publish real credential pools
-extensions/credential-pool/pools.json

@@ -148,8 +148,6 @@ function activeStatus(key: string, raw: string): string | null {
 			return /\bapi$/i.test(text) && !/searching|fetching|results|error/i.test(text)
 				? null
 				: `web ${text}`.replace(/\s+/g, " ").trim();
-		case "credential-pool":
-			return /keys/i.test(text) && !/rotat|rate-limited|error|fail/i.test(text) ? null : text;
 		default:
 			return text;
 	}

@@ -1,4 +1,0 @@
-# Never commit real credentials — only the example template
-pools.json
-pools.json.bak*
-state/

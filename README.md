@@ -20,7 +20,7 @@ Install once, then customize via `/config` or granular package filters.
 pi install git:github.com/DysektAI/pi-extensions
 
 # Pinned release tag
-pi install git:github.com/DysektAI/pi-extensions@v0.7.1
+pi install git:github.com/DysektAI/pi-extensions@v0.8.0
 
 # Local checkout (development — loads directly from path without copying)
 pi install /path/to/pi-extensions
@@ -69,7 +69,7 @@ AI Agent Kit already sets this; standalone installations need this setting.
 - **`morph-provider`**: Custom Morph adapter with live model discovery, cached and curated fallbacks, and verified chat models only (specialized and unknown IDs are excluded). Pricing is a documented snapshot; a rejected key withdraws the provider. Reads `morph` from `auth.json` or `MORPH_API_KEY`; supports `MORPH_BASE_URL` and `MORPH_MODELS_TIMEOUT_MS`. Moved from AI Agent Kit; remove the old local `morph-provider.ts` copy to avoid duplicate registration.
 - **`megallm-provider`**: OpenAI-compatible adapter for MegaLLM endpoints.
 - **`opencode-compat`**: Opt-in OpenCode Zen/Go request compatibility on upstream Pi 0.99.1+: session identifiers, client headers, and inert tool declarations for summaries and helper calls. Enable with `PI_OPENCODE_COMPAT=1` only when stock requests fail. Retains fork conventions without changing upstream adapters; live service acceptance can change independently.
-- **`credential-pool`**: API key rotation framework (template in `pools.example.json`).
+- **`pool-guard`**: Request feedback for [AI Agent Kit](https://github.com/DysektAI/ai-agent-kit) key pools. When a pooled provider (models.json `apiKey: "!bash …/<provider>-pool/<script>"`) fails with 401/402/403/429 or quota/auth error text, asks the kit engine (`~/.pi/agent/bin/pool.py`) to bench the current key so the retry gets another; promotes a retried exhausted key that works. Never reads key files; inert without kit pools. Set `POOL_PYTHON` if `python3` is not on PATH.
 
 ### Integrations & Skills
 - **`typesafe`**: TypeSafe Jev bounded judgment model (`typesafe_ask` tool, `/jev`). Key from `auth.json` (`typesafe`) or `TYPESAFE_API_KEY`. Pre-checks stay disabled unless `TYPESAFE_AUTO=on` ([docs](extensions/typesafe/README.md)). Bundles `skills/typesafe-ai` and `skills/jev-judgments`.
@@ -145,13 +145,8 @@ PI_UPSTREAM_ROOT=/path/to/built/upstream/pi npm run test:upstream
 ```
 
 The suite uses isolated settings and fake credentials. It loads every extension with upstream's
-loader and tests native provider composition, custom models, Zen/Go API payloads, compaction,
-and credential-pool rotation in both load orders. Network responses are mocked; the suite does
+loader and tests native provider composition, custom models, Zen/Go API payloads and compaction. Network responses are mocked; the suite does
 not use your account or prove that a provider's live access policy accepts the requests.
-
-OpenCode pool rotations preserve native stream handlers. Other providers retain the existing
-registration path. Keep `models.json` API-key overrides out of pooled providers, since upstream
-configuration can override provider auth.
 
 Horizontal code-block rules remain a fork renderer preference. Upstream's current extension
 API does not expose that layout setting; this package does not change it through private APIs.
