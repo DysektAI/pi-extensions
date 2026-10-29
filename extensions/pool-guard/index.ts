@@ -33,25 +33,34 @@ export default function poolGuard(pi: ExtensionAPI): void {
 	const python = process.env.POOL_PYTHON || "python3";
 	let warned = false;
 	const guard = createGuard(pools, {
-		report(pool: string, outcome: Outcome, reason: string) {
-			const args = [engine, pool, "--report", outcome, ...(reason ? ["--reason", reason] : [])];
+		report(pool: string, outcome: Outcome, reason: string, fingerprint?: string) {
+			const args = [
+				engine, pool, "--report", outcome,
+				...(reason ? ["--reason", reason] : []),
+				...(fingerprint ? ["--key", `key#${fingerprint}`] : []),
+			];
 			const result = spawnSync(python, args, { encoding: "utf8", timeout: 10000, windowsHide: true });
 			if ((result.error || result.status !== 0) && !warned) {
 				warned = true;
 				console.warn(`[pool-guard] Could not update the ${pool} pool (set POOL_PYTHON if python3 is not on PATH).`);
 			}
 		},
-		currentIsTrial(pool: string): boolean {
+		current(pool: string) {
 			try {
 				const state = JSON.parse(readFileSync(join(agentDir, `${pool}-pool`, "state.json"), "utf8"));
-				return state?.current_from === "exhausted";
+				const fingerprint = typeof state?.current === "string" ? state.current : undefined;
+				return { fingerprint, trial: state?.current_from === "exhausted" };
 			} catch {
-				return false;
+				return { trial: false };
 			}
 		},
 		now: () => Date.now(),
 	});
 
+	// Pi resolves the pool credential just before this event, so state.json names the key in use.
+	pi.on("before_provider_request", (_event, ctx) => {
+		guard.onRequest(ctx.model?.provider);
+	});
 	pi.on("after_provider_response", (event, ctx) => {
 		guard.onResponse(ctx.model?.provider, event.status);
 	});

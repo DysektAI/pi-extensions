@@ -54,34 +54,46 @@ describe("classification", () => {
 });
 
 describe("createGuard", () => {
-	function harness(trial = false) {
+	function harness(current = { fingerprint: "aaaa1111", trial: false }) {
 		const calls: string[] = [];
 		let clock = 0;
+		const state = { ...current };
 		const guard = createGuard(new Map([["deepseek", "deepseek"]]), {
-			report: (pool, outcome, reason) => calls.push(`${pool}:${outcome}:${reason}`),
-			currentIsTrial: () => trial,
+			report: (pool, outcome, reason, fp) => calls.push(`${pool}:${outcome}:${reason}:${fp ?? "-"}`),
+			current: () => ({ ...state }),
 			now: () => clock,
 		});
-		return { guard, calls, advance: (ms: number) => (clock += ms) };
+		return { guard, calls, state, advance: (ms: number) => (clock += ms) };
 	}
 
 	it("benches once per failure window and ignores unpooled providers", () => {
 		const { guard, calls, advance } = harness();
+		guard.onRequest("deepseek");
 		guard.onResponse("deepseek", 429);
 		guard.onAssistantError("deepseek", "rate limit reached");
 		guard.onResponse("openai", 429);
 		advance(DEDUPE_MS);
 		guard.onResponse("deepseek", 401);
-		assert.deepEqual(calls, ["deepseek:exhausted:http 429", "deepseek:exhausted:http 401 auth"]);
+		assert.deepEqual(calls, ["deepseek:exhausted:http 429:aaaa1111", "deepseek:exhausted:http 401 auth:aaaa1111"]);
+	});
+
+	it("reports the key that was in use when the request started", () => {
+		const { guard, calls, state } = harness();
+		guard.onRequest("deepseek");
+		state.fingerprint = "bbbb2222"; // another process rotated meanwhile
+		guard.onResponse("deepseek", 429);
+		assert.deepEqual(calls, ["deepseek:exhausted:http 429:aaaa1111"]);
 	});
 
 	it("promotes only a key under trial on success", () => {
-		const idle = harness(false);
+		const idle = harness();
+		idle.guard.onRequest("deepseek");
 		idle.guard.onResponse("deepseek", 200);
 		assert.deepEqual(idle.calls, []);
-		const trial = harness(true);
+		const trial = harness({ fingerprint: "cccc3333", trial: true });
+		trial.guard.onRequest("deepseek");
 		trial.guard.onResponse("deepseek", 200);
-		assert.deepEqual(trial.calls, ["deepseek:ok:"]);
+		assert.deepEqual(trial.calls, ["deepseek:ok::cccc3333"]);
 	});
 
 	it("benches on classified error text without a decisive status", () => {
@@ -89,7 +101,7 @@ describe("createGuard", () => {
 		guard.onResponse("deepseek", 400);
 		guard.onAssistantError("deepseek", "RESOURCE_EXHAUSTED");
 		guard.onAssistantError("deepseek", "");
-		assert.deepEqual(calls, ["deepseek:exhausted:quota error"]);
+		assert.deepEqual(calls, ["deepseek:exhausted:quota error:-"]);
 	});
 });
 
@@ -109,10 +121,11 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 				join(dir, "bin", "pool.py"),
 				"import sys, pathlib\npathlib.Path(sys.argv[0]).with_name('calls.log').open('a').write(' '.join(sys.argv[1:]) + '\\n')\n",
 			);
-			await writeFile(join(dir, "deepseek-pool", "state.json"), JSON.stringify({ current_from: "exhausted" }));
+			await writeFile(join(dir, "deepseek-pool", "state.json"), JSON.stringify({ current: "dddd4444", current_from: "exhausted" }));
 			const handlers = new Map<string, (event: unknown, ctx: unknown) => void>();
 			poolGuard({ on: (name: string, fn: (e: unknown, c: unknown) => void) => handlers.set(name, fn) } as never);
 			const ctx = { model: { provider: "deepseek" } };
+			handlers.get("before_provider_request")!({ payload: {} }, ctx);
 			handlers.get("after_provider_response")!({ status: 429 }, ctx);
 			handlers.get("after_provider_response")!({ status: 200 }, ctx);
 			// A virtual model routed to the pooled provider: attribute by the message.
@@ -122,7 +135,7 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 				{ model: { provider: "my-router" } },
 			);
 			const log = await readFile(join(dir, "bin", "calls.log"), "utf8");
-			assert.deepEqual(log.trim().split(/\r?\n/), ["deepseek --report exhausted --reason http 429", "deepseek --report ok", "deepseek --report exhausted --reason quota error"]);
+			assert.deepEqual(log.trim().split(/\r?\n/), ["deepseek --report exhausted --reason http 429 --key key#dddd4444", "deepseek --report ok --key key#dddd4444", "deepseek --report exhausted --reason quota error --key key#dddd4444"]);
 		} finally {
 			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previous;

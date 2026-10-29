@@ -72,11 +72,18 @@ export function reasonForError(text: string): string | undefined {
 	return undefined;
 }
 
+export interface PoolCurrent {
+	/** Fingerprint of the pool's current key (`state.json` "current"). */
+	fingerprint?: string;
+	/** Whether that key is under trial from exhausted.txt. */
+	trial: boolean;
+}
+
 export interface GuardDeps {
-	/** Run `pool.py <pool> --report <outcome> [--reason <reason>]`. */
-	report(pool: string, outcome: Outcome, reason: string): void;
-	/** Whether the pool's current key is under trial from exhausted.txt. */
-	currentIsTrial(pool: string): boolean;
+	/** Run `pool.py <pool> --report <outcome> [--reason <reason>] [--key key#<fp>]`. */
+	report(pool: string, outcome: Outcome, reason: string, fingerprint?: string): void;
+	/** Read the pool's current key fingerprint (never key text). */
+	current(pool: string): PoolCurrent;
 	now(): number;
 }
 
@@ -85,20 +92,28 @@ export const DEDUPE_MS = 3000;
 
 export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
 	const lastBench = new Map<string, number>();
+	// Key in use when the latest request to each pool started, so a late report
+	// cannot bench a different key that was picked in the meantime.
+	const inFlight = new Map<string, PoolCurrent>();
 	const bench = (pool: string, reason: string) => {
 		const at = deps.now();
 		if (at - (lastBench.get(pool) ?? -Infinity) < DEDUPE_MS) return;
 		lastBench.set(pool, at);
-		deps.report(pool, "exhausted", reason);
+		deps.report(pool, "exhausted", reason, inFlight.get(pool)?.fingerprint);
 	};
 	return {
+		onRequest(provider: string | undefined): void {
+			const pool = provider ? pools.get(provider) : undefined;
+			if (pool) inFlight.set(pool, deps.current(pool));
+		},
 		onResponse(provider: string | undefined, status: number): void {
 			const pool = provider ? pools.get(provider) : undefined;
 			if (!pool) return;
 			const result = outcomeForStatus(status);
 			if (!result) return;
 			if (result.outcome === "ok") {
-				if (deps.currentIsTrial(pool)) deps.report(pool, "ok", "");
+				const used = inFlight.get(pool) ?? deps.current(pool);
+				if (used.trial) deps.report(pool, "ok", "", used.fingerprint);
 				return;
 			}
 			bench(pool, result.reason);
