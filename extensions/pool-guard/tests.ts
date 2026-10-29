@@ -116,7 +116,7 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 			handlers.get("after_provider_response")!({ status: 429 }, ctx);
 			handlers.get("after_provider_response")!({ status: 200 }, ctx);
 			const log = await readFile(join(dir, "bin", "calls.log"), "utf8");
-			assert.deepEqual(log.trim().split("\n"), ["deepseek --report exhausted --reason http 429", "deepseek --report ok"]);
+			assert.deepEqual(log.trim().split(/\r?\n/), ["deepseek --report exhausted --reason http 429", "deepseek --report ok"]);
 		} finally {
 			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previous;
