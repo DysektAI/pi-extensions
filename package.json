@@ -1,6 +1,6 @@
 {
   "name": "@dysektai/pi-extensions",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Public-safe Pi coding-agent extensions (config menu, tasks, search, goal loop, UX helpers, and more).",
   "keywords": [
     "pi-package",
@@ -22,7 +22,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/morph/tests.ts extensions/_shared/cache-first.tests.ts extensions/_shared/compaction-threshold.tests.ts tests/discord-package-boundary.ts tests/sdk-dependencies.ts extensions/dysektlb/tests.ts extensions/agentrouter-replay/tests.ts extensions/agentrouter/tests.ts extensions/kit-status/tests.ts extensions/auto-update/tests.ts extensions/credential-pool/tests.ts extensions/_shared/model-roles.tests.ts extensions/default-model-warning/tests.ts tests/settings-safety.ts tests/node-version.tests.ts",
+    "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/morph/tests.ts extensions/_shared/cache-first.tests.ts extensions/_shared/compaction-threshold.tests.ts tests/discord-package-boundary.ts tests/sdk-dependencies.ts extensions/dysektlb/tests.ts extensions/agentrouter-replay/tests.ts extensions/agentrouter/tests.ts extensions/kit-status/tests.ts extensions/auto-update/tests.ts extensions/pool-guard/tests.ts extensions/_shared/model-roles.tests.ts extensions/default-model-warning/tests.ts tests/settings-safety.ts tests/node-version.tests.ts",
     "verify": "npm run typecheck && npm test",
     "test:upstream": "tsx --test tests/upstream-compatibility.ts",
     "typecheck": "tsc --pretty false"
