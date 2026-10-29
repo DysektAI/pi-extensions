@@ -26,6 +26,11 @@ export interface CacheFirstResult {
 export const nonEmpty = <T>(models: T[]): T[] | undefined => (models.length > 0 ? models : undefined);
 
 /** Non-auth refresh failure: the cached catalog stays, but say it may be stale. */
+/** Pi throws this from a captured pi/ctx once the session runtime is gone (e.g. after `pi -p`). */
+export function isDisposedRuntimeError(error: unknown): boolean {
+	return /is stale after session replacement or reload/.test(error instanceof Error ? error.message : String(error));
+}
+
 export function warnStaleCatalog(tag: string, error: unknown): void {
 	const reason = error instanceof Error ? error.message : String(error);
 	console.warn(`[${tag}] Catalog refresh failed (${reason}); keeping cached models.`);
@@ -54,7 +59,8 @@ async function refreshInBackground<T>(catalog: CacheFirstCatalog<T>, previous: s
 		if (JSON.stringify(fresh) !== previous) catalog.register(fresh);
 	} catch (error) {
 		try {
-			catalog.onRefreshFailure?.(error);
+			// A refresh that finishes after the runtime shut down has nothing left to update.
+			if (!isDisposedRuntimeError(error)) catalog.onRefreshFailure?.(error);
 		} catch {
 			// A reloaded extension's API is inactive; nothing is left to update.
 		}

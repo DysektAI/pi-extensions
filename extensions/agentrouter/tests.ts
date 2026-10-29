@@ -97,7 +97,7 @@ test("extension registration keeps Pi's credential/endpoint/header resolution an
 		registered.models?.map((model) => model.id),
 		["gpt-6.1-sol"],
 	);
-	assert.deepEqual(events, ["session_start"]);
+	assert.deepEqual(events, ["session_shutdown", "session_start"]);
 	assert.deepEqual(commands, ["agentrouter-refresh"]);
 });
 

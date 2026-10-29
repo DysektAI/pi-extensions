@@ -1,5 +1,6 @@
 import type { Api, Model, RefreshModelsContext } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { isDisposedRuntimeError } from "../_shared/cache-first.ts";
 
 export const USER_AGENT = "claude-cli/2.1.218 (external, sdk-cli)";
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -206,21 +207,29 @@ export function registerAgentRouter(
 			},
 		}),
 	});
-	const warn = () =>
+	let stopped = false;
+	pi.on("session_shutdown", () => {
+		stopped = true;
+	});
+	const warn = (error?: unknown) => {
+		if (stopped || isDisposedRuntimeError(error)) return;
 		console.warn(
 			"[agentrouter-provider] Catalog refresh failed; keeping the last known models. Use /agentrouter-refresh to retry.",
 		);
+	};
 	pi.on("session_start", (_event, ctx) => {
 		// The registry honors --offline. Don't delay startup on a warm-cache fetch.
 		// Any provider registration starts an offline registry refresh that
 		// supersedes this provider's in-flight network refresh without an error
 		// (see UPSTREAM_NOTES), so retry until a network result is published.
 		const before = networkResults;
+		stopped = false;
 		const attempt = async (n: number): Promise<void> => {
+			if (stopped) return;
 			const result = await ctx.modelRegistry.refresh({ providers: ["agentrouter"] });
-			if (result.errors.has("agentrouter")) return warn();
+			if (result.errors.has("agentrouter")) return warn(result.errors.get("agentrouter"));
 			if (result.aborted || networkResults > before || n + 1 >= STARTUP_REFRESH_ATTEMPTS) return;
-			await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (n + 1)));
+			await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (n + 1)).unref?.());
 			return attempt(n + 1);
 		};
 		void attempt(0).catch(warn);

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { type CacheFirstCatalog, registerCacheFirst } from "./cache-first.ts";
+import { type CacheFirstCatalog, isDisposedRuntimeError, registerCacheFirst } from "./cache-first.ts";
 
 function catalog(overrides: Partial<CacheFirstCatalog<string>>) {
 	const registered: string[][] = [];
@@ -77,4 +77,23 @@ describe("registerCacheFirst", () => {
 		assert.deepEqual(cold.registered, []);
 		assert.equal((cold.coldErrors[0] as Error).message, "offline");
 	});
+});
+
+it("refresh that outlives the session runtime stays silent", async () => {
+	const failures: unknown[] = [];
+	const { refresh } = await registerCacheFirst({
+		loadCache: async () => ["cached"],
+		fetchFresh: async () => ["fresh"],
+		saveCache: async () => {},
+		register: (models) => {
+			if (models[0] === "fresh") {
+				throw new Error("This extension ctx is stale after session replacement or reload. Do not use a captured pi");
+			}
+		},
+		onColdFailure: () => {},
+		onRefreshFailure: (error) => failures.push(error),
+	});
+	await refresh;
+	assert.deepEqual(failures, []);
+	assert.equal(isDisposedRuntimeError(new Error("other failure")), false);
 });
