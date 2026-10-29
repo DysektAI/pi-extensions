@@ -20,7 +20,7 @@ Install once, then customize via `/config` or granular package filters.
 pi install git:github.com/DysektAI/pi-extensions
 
 # Pinned release tag
-pi install git:github.com/DysektAI/pi-extensions@v0.8.0
+pi install git:github.com/DysektAI/pi-extensions@v0.8.1
 
 # Local checkout (development — loads directly from path without copying)
 pi install /path/to/pi-extensions
