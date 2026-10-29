@@ -96,7 +96,7 @@ describe("createGuard", () => {
 const python = spawnSync("python3", ["--version"]).status === 0;
 
 describe("extension wiring", { skip: python ? false : "python3 not available" }, () => {
-	it("reports through the pool engine and stays silent about key text", async () => {
+	it("reports through the pool engine and stays silent about key text", { timeout: 20000 }, async () => {
 		const dir = await mkdtemp(join(tmpdir(), "pool-guard-"));
 		const previous = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = dir;
@@ -115,8 +115,14 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 			const ctx = { model: { provider: "deepseek" } };
 			handlers.get("after_provider_response")!({ status: 429 }, ctx);
 			handlers.get("after_provider_response")!({ status: 200 }, ctx);
+			// A virtual model routed to the pooled provider: attribute by the message.
+			await new Promise((r) => setTimeout(r, DEDUPE_MS + 50));
+			handlers.get("message_end")!(
+				{ message: { role: "assistant", provider: "deepseek", errorMessage: "429 rate limit reached" } },
+				{ model: { provider: "my-router" } },
+			);
 			const log = await readFile(join(dir, "bin", "calls.log"), "utf8");
-			assert.deepEqual(log.trim().split(/\r?\n/), ["deepseek --report exhausted --reason http 429", "deepseek --report ok"]);
+			assert.deepEqual(log.trim().split(/\r?\n/), ["deepseek --report exhausted --reason http 429", "deepseek --report ok", "deepseek --report exhausted --reason quota error"]);
 		} finally {
 			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previous;

@@ -55,10 +55,13 @@ export default function poolGuard(pi: ExtensionAPI): void {
 	pi.on("after_provider_response", (event, ctx) => {
 		guard.onResponse(ctx.model?.provider, event.status);
 	});
+	// after_provider_response carries no request model, so a virtual model that routes
+	// to a pooled provider is only attributed here: assistant messages record the
+	// physical provider the router picked.
 	pi.on("message_end", (event, ctx) => {
-		const message = event.message as { role?: string; errorMessage?: string };
+		const message = event.message as { role?: string; provider?: string; errorMessage?: string };
 		if (message.role === "assistant" && message.errorMessage) {
-			guard.onAssistantError(ctx.model?.provider, message.errorMessage);
+			guard.onAssistantError(message.provider ?? ctx.model?.provider, message.errorMessage);
 		}
 	});
 }
