@@ -72,6 +72,87 @@ export function reasonForError(text: string): string | undefined {
 	return undefined;
 }
 
+/**
+ * Upstream retry window in seconds, from response headers or provider error text.
+ *
+ * Headers win: `retry-after-ms`, then `retry-after` as seconds or an HTTP date. Pi
+ * refuses to sleep past its own cap and reports the value it declined to wait for
+ * ("Server requested 21437s retry delay (max: 60s)"), which is the fallback for a
+ * provider whose reply reaches us only as error text.
+ */
+export function retryAfterSeconds(headers: Record<string, string> | undefined, errorText?: string): number | undefined {
+	const lower = new Map<string, string>();
+	for (const [name, value] of Object.entries(headers ?? {})) lower.set(name.toLowerCase(), value);
+	const millis = Number.parseFloat(lower.get("retry-after-ms") ?? "");
+	if (Number.isFinite(millis) && millis > 0) return millis / 1000;
+	const raw = lower.get("retry-after");
+	if (raw) {
+		const seconds = Number.parseFloat(raw);
+		if (Number.isFinite(seconds) && seconds > 0) return seconds;
+		const date = Date.parse(raw);
+		if (!Number.isNaN(date)) {
+			const until = (date - Date.now()) / 1000;
+			if (until > 0) return until;
+		}
+	}
+	const declined = /server requested (\d+)s retry delay/i.exec(errorText ?? "");
+	return declined ? Number(declined[1]) : undefined;
+}
+
+/** Pool state as reported by `pool.py <pool> --status`. */
+export interface PoolSnapshot {
+	/** Whether the engine would hand out a key right now. */
+	usable: boolean;
+	/** Epoch ms after which a benched key becomes retryable, when known. */
+	nextRetryAt?: number;
+}
+
+/** Parse `--status` JSON. Unknown fields, older engines, and junk yield undefined. */
+export function parsePoolStatus(raw: string): PoolSnapshot | undefined {
+	let data: unknown;
+	try {
+		data = JSON.parse(raw);
+	} catch {
+		return undefined;
+	}
+	if (!data || typeof data !== "object") return undefined;
+	const status = data as { usable?: unknown; counts?: { active?: unknown }; next_retry_at?: unknown };
+	const retryAt = typeof status.next_retry_at === "number" ? status.next_retry_at * 1000 : undefined;
+	if (typeof status.usable === "boolean") return { usable: status.usable, nextRetryAt: retryAt };
+	// Engines before --until report counts only; an active key is still decisive.
+	const active = typeof status.counts?.active === "number" ? status.counts.active : undefined;
+	return active === undefined ? undefined : { usable: active > 0, nextRetryAt: retryAt };
+}
+
+export interface FallbackCandidate {
+	provider: string;
+	id: string;
+}
+
+/**
+ * First candidate that is not the current provider and whose pool, when the
+ * provider is pooled, has a usable key. Candidate order is the caller's
+ * preference; an unpooled provider needs no pool check.
+ */
+export function pickFallback(
+	currentProvider: string | undefined,
+	candidates: readonly FallbackCandidate[],
+	pools: Map<string, string>,
+	status: (pool: string) => PoolSnapshot | undefined,
+	cache = new Map<string, PoolSnapshot | undefined>(),
+): FallbackCandidate | undefined {
+	for (const candidate of candidates) {
+		if (candidate.provider === currentProvider) continue;
+		const pool = pools.get(candidate.provider);
+		if (pool) {
+			if (!cache.has(pool)) cache.set(pool, status(pool));
+			if (!cache.get(pool)?.usable) continue;
+		}
+		return candidate;
+	}
+	return undefined;
+}
+
 export interface PoolCurrent {
 	/** Fingerprint of the pool's current key (`state.json` "current"). */
 	fingerprint?: string;
@@ -80,8 +161,8 @@ export interface PoolCurrent {
 }
 
 export interface GuardDeps {
-	/** Run `pool.py <pool> --report <outcome> [--reason <reason>] [--key key#<fp>]`. */
-	report(pool: string, outcome: Outcome, reason: string, fingerprint?: string): void;
+	/** Run `pool.py <pool> --report <outcome> [--reason] [--key key#<fp>] [--until <s>]`. */
+	report(pool: string, outcome: Outcome, reason: string, fingerprint?: string, untilSec?: number): void;
 	/** Read the pool's current key fingerprint (never key text). */
 	current(pool: string): PoolCurrent;
 	now(): number;
@@ -95,18 +176,18 @@ export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
 	// Key in use when the latest request to each pool started, so a late report
 	// cannot bench a different key that was picked in the meantime.
 	const inFlight = new Map<string, PoolCurrent>();
-	const bench = (pool: string, reason: string) => {
+	const bench = (pool: string, reason: string, untilSec?: number) => {
 		const at = deps.now();
 		if (at - (lastBench.get(pool) ?? -Infinity) < DEDUPE_MS) return;
 		lastBench.set(pool, at);
-		deps.report(pool, "exhausted", reason, inFlight.get(pool)?.fingerprint);
+		deps.report(pool, "exhausted", reason, inFlight.get(pool)?.fingerprint, untilSec);
 	};
 	return {
 		onRequest(provider: string | undefined): void {
 			const pool = provider ? pools.get(provider) : undefined;
 			if (pool) inFlight.set(pool, deps.current(pool));
 		},
-		onResponse(provider: string | undefined, status: number): void {
+		onResponse(provider: string | undefined, status: number, headers?: Record<string, string>): void {
 			const pool = provider ? pools.get(provider) : undefined;
 			if (!pool) return;
 			const result = outcomeForStatus(status);
@@ -116,13 +197,13 @@ export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
 				if (used.trial) deps.report(pool, "ok", "", used.fingerprint);
 				return;
 			}
-			bench(pool, result.reason);
+			bench(pool, result.reason, retryAfterSeconds(headers));
 		},
 		onAssistantError(provider: string | undefined, errorText: string): void {
 			const pool = provider ? pools.get(provider) : undefined;
 			if (!pool || !errorText) return;
 			const reason = reasonForError(errorText);
-			if (reason) bench(pool, reason);
+			if (reason) bench(pool, reason, retryAfterSeconds(undefined, errorText));
 		},
 	};
 }

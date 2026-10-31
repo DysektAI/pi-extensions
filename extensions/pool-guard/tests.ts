@@ -12,7 +12,16 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import poolGuard from "./index.ts";
-import { createGuard, DEDUPE_MS, discoverPools, outcomeForStatus, reasonForError } from "./pure.ts";
+import {
+	createGuard,
+	DEDUPE_MS,
+	discoverPools,
+	outcomeForStatus,
+	parsePoolStatus,
+	pickFallback,
+	reasonForError,
+	retryAfterSeconds,
+} from "./pure.ts";
 
 const models = {
 	providers: {
@@ -53,13 +62,72 @@ describe("classification", () => {
 	});
 });
 
+describe("upstream retry window", () => {
+	it("reads retry-after headers in milliseconds, seconds, and HTTP-date form", () => {
+		assert.equal(retryAfterSeconds({ "retry-after-ms": "1500" }), 1.5);
+		assert.equal(retryAfterSeconds({ "Retry-After": "21437" }), 21437);
+		assert.equal(retryAfterSeconds({ "retry-after": "-5" }), undefined);
+		const upcoming = new Date(Date.now() + 60_000).toUTCString();
+		const seconds = retryAfterSeconds({ "retry-after": upcoming });
+		assert.ok(seconds !== undefined && seconds > 0 && seconds <= 60);
+	});
+
+	it("falls back to the delay Pi declined to wait for", () => {
+		const text =
+			"Server requested 21437s retry delay (max: 60s). 429 Free usage limit reached. subscribe to OpenCode Go";
+		assert.equal(retryAfterSeconds(undefined, text), 21437);
+		assert.equal(retryAfterSeconds(undefined, "429 rate limit reached"), undefined);
+		assert.equal(retryAfterSeconds({}, undefined), undefined);
+	});
+});
+
+describe("pool status", () => {
+	it("parses usable and the retry time an engine reports", () => {
+		assert.deepEqual(
+			parsePoolStatus('{"provider":"opencode","counts":{"active":0},"usable":false,"next_retry_at":1793470091.5}'),
+			{ usable: false, nextRetryAt: 1_793_470_091_500 },
+		);
+		assert.deepEqual(parsePoolStatus('{"counts":{"active":2}}'), { usable: true, nextRetryAt: undefined });
+		assert.equal(parsePoolStatus("not json"), undefined);
+		assert.equal(parsePoolStatus('{"counts":{}}'), undefined);
+	});
+
+	it("prefers the first candidate whose pool is usable", () => {
+		const pools = new Map([
+			["opencode", "opencode"],
+			["groq", "groq"],
+		]);
+		const snapshots = new Map<string, { usable: boolean }>([
+			["opencode", { usable: false }],
+			["groq", { usable: true }],
+		]);
+		const status = (pool: string) => snapshots.get(pool) as never;
+		const candidates = [
+			{ provider: "opencode", id: "beam-free" },
+			{ provider: "morph", id: "morph-dsv41flash" },
+			{ provider: "groq", id: "llama" },
+		];
+		assert.deepEqual(pickFallback("opencode", candidates, pools, status), {
+			provider: "morph",
+			id: "morph-dsv41flash",
+		});
+		assert.deepEqual(pickFallback("other", candidates, pools, status), {
+			provider: "morph",
+			id: "morph-dsv41flash",
+		});
+		// An unknown pool state is never treated as usable.
+		assert.equal(pickFallback("opencode", [candidates[0]], pools, () => undefined), undefined);
+	});
+});
+
 describe("createGuard", () => {
 	function harness(current = { fingerprint: "aaaa1111", trial: false }) {
 		const calls: string[] = [];
 		let clock = 0;
 		const state = { ...current };
 		const guard = createGuard(new Map([["deepseek", "deepseek"]]), {
-			report: (pool, outcome, reason, fp) => calls.push(`${pool}:${outcome}:${reason}:${fp ?? "-"}`),
+			report: (pool, outcome, reason, fp, until) =>
+				calls.push(`${pool}:${outcome}:${reason}:${fp ?? "-"}${until === undefined ? "" : `:${until}`}`),
 			current: () => ({ ...state }),
 			now: () => clock,
 		});
@@ -75,6 +143,24 @@ describe("createGuard", () => {
 		advance(DEDUPE_MS);
 		guard.onResponse("deepseek", 401);
 		assert.deepEqual(calls, ["deepseek:exhausted:http 429:aaaa1111", "deepseek:exhausted:http 401 auth:aaaa1111"]);
+	});
+
+	it("benches with the upstream retry window", () => {
+		const fromHeader = harness();
+		fromHeader.guard.onRequest("deepseek");
+		fromHeader.guard.onResponse("deepseek", 429, { "Retry-After": "21437" });
+		assert.deepEqual(fromHeader.calls, ["deepseek:exhausted:http 429:aaaa1111:21437"]);
+		const fromText = harness();
+		fromText.guard.onAssistantError(
+			"deepseek",
+			"Server requested 20239s retry delay (max: 60s). 429 Free usage limit reached",
+		);
+		assert.deepEqual(fromText.calls, ["deepseek:exhausted:quota error:-:20239"]);
+		// A status without any retry signal keeps the engine's own cooldown.
+		const bare = harness();
+		bare.guard.onRequest("deepseek");
+		bare.guard.onResponse("deepseek", 429);
+		assert.deepEqual(bare.calls, ["deepseek:exhausted:http 429:aaaa1111"]);
 	});
 
 	it("reports the key that was in use when the request started", () => {
@@ -116,26 +202,105 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 			await mkdir(join(dir, "bin"));
 			await mkdir(join(dir, "deepseek-pool"));
 			await writeFile(join(dir, "models.json"), JSON.stringify(models));
-			// Fake engine: append its arguments to a log file.
+			// Fake engine: answer --status, log every other call's arguments.
 			await writeFile(
 				join(dir, "bin", "pool.py"),
-				"import sys, pathlib\npathlib.Path(sys.argv[0]).with_name('calls.log').open('a').write(' '.join(sys.argv[1:]) + '\\n')\n",
+				[
+					"import sys, pathlib",
+					"if '--status' in sys.argv:",
+					"    print('{\"counts\": {\"active\": 1}, \"usable\": true}')",
+					"else:",
+					"    pathlib.Path(sys.argv[0]).with_name('calls.log').open('a').write(' '.join(sys.argv[1:]) + '\\n')",
+					"",
+				].join("\n"),
 			);
 			await writeFile(join(dir, "deepseek-pool", "state.json"), JSON.stringify({ current: "dddd4444", current_from: "exhausted" }));
 			const handlers = new Map<string, (event: unknown, ctx: unknown) => void>();
 			poolGuard({ on: (name: string, fn: (e: unknown, c: unknown) => void) => handlers.set(name, fn) } as never);
 			const ctx = { model: { provider: "deepseek" } };
 			handlers.get("before_provider_request")!({ payload: {} }, ctx);
-			handlers.get("after_provider_response")!({ status: 429 }, ctx);
-			handlers.get("after_provider_response")!({ status: 200 }, ctx);
+			handlers.get("after_provider_response")!({ status: 429, headers: { "Retry-After": "21437" } }, ctx);
+			handlers.get("after_provider_response")!({ status: 200, headers: {} }, ctx);
 			// A virtual model routed to the pooled provider: attribute by the message.
 			await new Promise((r) => setTimeout(r, DEDUPE_MS + 50));
 			handlers.get("message_end")!(
-				{ message: { role: "assistant", provider: "deepseek", errorMessage: "429 rate limit reached" } },
-				{ model: { provider: "my-router" } },
+				{
+					message: {
+						role: "assistant",
+						provider: "deepseek",
+						errorMessage: "Server requested 20239s retry delay (max: 60s). 429 Free usage limit reached",
+					},
+				},
+				{
+					model: { provider: "my-router" },
+					modelRegistry: { getAvailable: () => [] },
+					scopedModels: [],
+					ui: { notify: () => {} },
+				},
 			);
 			const log = await readFile(join(dir, "bin", "calls.log"), "utf8");
-			assert.deepEqual(log.trim().split(/\r?\n/), ["deepseek --report exhausted --reason http 429 --key key#dddd4444", "deepseek --report ok --key key#dddd4444", "deepseek --report exhausted --reason quota error --key key#dddd4444"]);
+			assert.deepEqual(log.trim().split(/\r?\n/), [
+				"deepseek --report exhausted --reason http 429 --key key#dddd4444 --until 21437",
+				"deepseek --report ok --key key#dddd4444",
+				"deepseek --report exhausted --reason quota error --key key#dddd4444 --until 20239",
+			]);
+		} finally {
+			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previous;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("moves a session off a pool with no usable key, once per outage", { timeout: 20000 }, async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pool-guard-switch-"));
+		const previous = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = dir;
+		try {
+			await mkdir(join(dir, "bin"));
+			await mkdir(join(dir, "opencode-pool"));
+			await writeFile(
+				join(dir, "models.json"),
+				JSON.stringify({ providers: { opencode: { apiKey: "!bash $HOME/.pi/agent/opencode-pool/oc-pool" } } }),
+			);
+			await writeFile(
+				join(dir, "bin", "pool.py"),
+				[
+					"import sys",
+					"if '--status' in sys.argv:",
+					"    print('{\"counts\": {\"active\": 0}, \"usable\": false, \"next_retry_at\": 1793470091.5}')",
+					"",
+				].join("\n"),
+			);
+			const picks: string[] = [];
+			const notices: string[] = [];
+			const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+			poolGuard({
+				on: (name: string, fn: (e: unknown, c: unknown) => unknown) => handlers.set(name, fn),
+				getSettings: () => ({ defaultProvider: "morph", defaultModel: "morph-dsv41flash" }),
+				setModel: async (model: { provider: string; id: string }) => {
+					picks.push(`${model.provider}/${model.id}`);
+					return true;
+				},
+			} as never);
+			const ctx = {
+				model: { provider: "opencode", id: "beam-free" },
+				modelRegistry: {
+					find: (provider: string, id: string) => ({ provider, id }),
+					getAvailable: () => [{ provider: "opencode", id: "beam-free" }],
+				},
+				scopedModels: [],
+				ui: { notify: (message: string) => notices.push(message) },
+			};
+			await handlers.get("session_start")!({}, ctx);
+			for (let i = 0; i < 60 && picks.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
+			assert.deepEqual(picks, ["morph/morph-dsv41flash"]);
+			// A second start must not re-switch (or re-warn) for the same outage.
+			await handlers.get("session_start")!({}, ctx);
+			for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 100));
+			assert.deepEqual(picks, ["morph/morph-dsv41flash"]);
+			assert.equal(notices.length, 1);
+			assert.match(notices[0]!, /opencode pool has no usable keys/);
+			assert.match(notices[0]!, /switched to morph\/morph-dsv41flash/);
 		} finally {
 			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previous;
