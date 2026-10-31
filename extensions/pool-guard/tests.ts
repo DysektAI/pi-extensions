@@ -308,6 +308,40 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 		}
 	});
 
+	it("still benches with an engine that predates --until", { timeout: 20000 }, async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pool-guard-old-engine-"));
+		const previous = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = dir;
+		try {
+			await mkdir(join(dir, "bin"));
+			await mkdir(join(dir, "deepseek-pool"));
+			await writeFile(join(dir, "models.json"), JSON.stringify(models));
+			await writeFile(
+				join(dir, "bin", "pool.py"),
+				[
+					"import sys, pathlib",
+					"if '--until' in sys.argv:",
+					"    sys.stderr.write('pool.py: error: unrecognized arguments: --until\\n')",
+					"    sys.exit(2)",
+					"pathlib.Path(sys.argv[0]).with_name('calls.log').open('a').write(' '.join(sys.argv[1:]) + '\\n')",
+					"",
+				].join("\n"),
+			);
+			await writeFile(join(dir, "deepseek-pool", "state.json"), JSON.stringify({ current: "eeee5555" }));
+			const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+			poolGuard({ on: (name: string, fn: (e: unknown, c: unknown) => unknown) => handlers.set(name, fn) } as never);
+			const ctx = { model: { provider: "deepseek" } };
+			handlers.get("before_provider_request")!({ payload: {} }, ctx);
+			handlers.get("after_provider_response")!({ status: 429, headers: { "Retry-After": "21437" } }, ctx);
+			const log = await readFile(join(dir, "bin", "calls.log"), "utf8");
+			assert.deepEqual(log.trim().split(/\r?\n/), ["deepseek --report exhausted --reason http 429 --key key#eeee5555"]);
+		} finally {
+			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previous;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers nothing without pool wrappers", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "pool-guard-"));
 		const previous = process.env.PI_CODING_AGENT_DIR;

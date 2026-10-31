@@ -55,9 +55,15 @@ export default function poolGuard(pi: ExtensionAPI): void {
 				engine, pool, "--report", outcome,
 				...(reason ? ["--reason", reason] : []),
 				...(fingerprint ? ["--key", `key#${fingerprint}`] : []),
-				...(untilSec ? ["--until", String(Math.ceil(untilSec))] : []),
 			];
-			const result = spawnSync(python, args, { encoding: "utf8", timeout: 10000, windowsHide: true });
+			const run = (extra: string[]) =>
+				spawnSync(python, [...args, ...extra], { encoding: "utf8", timeout: 10000, windowsHide: true });
+			let result = untilSec ? run(["--until", String(Math.ceil(untilSec))]) : run([]);
+			// An engine from before --until rejects the flag outright; the bench still
+			// has to happen, so fall back to its own cooldown.
+			if (untilSec && result.status !== 0 && /unrecognized arguments|no such option/i.test(result.stderr ?? "")) {
+				result = run([]);
+			}
 			if ((result.error || result.status !== 0) && !warned) {
 				warned = true;
 				console.warn(`[pool-guard] Could not update the ${pool} pool (set POOL_PYTHON if python3 is not on PATH).`);
