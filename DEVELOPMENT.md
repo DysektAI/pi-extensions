@@ -82,9 +82,15 @@ type check. The pinned Pi SDK development dependencies provide the same types
 to the editor; run `npm ci` after updating this checkout.
 The Pi SDK requires Node 22.19 or newer for runtime integration tests. Node 20
 can still run the type check and dependency-free unit tests.
-A scoped `undici@8.12.2` override patches the pinned SDK's development dependency;
-keep it until an SDK update resolves a reviewed, patched version. CI audits the
-full development dependency graph. Do not downgrade the SDK with
+Scoped overrides patch the pinned SDK's development dependencies: `undici@8.12.2`
+and, since GHSA-g3hv-75wg-m249 (minimatch `<11.0.1`, DoS via globparts
+amplification, no 10.x fix) and the SDK's exact `minimatch@10.2.6` pin,
+`minimatch@11.0.3`. Both are vetted security pins from the upstream author
+(`isaacs`), carry no install scripts, and land inside the release cooldown
+because the advisory has no fix in range; keep them until an SDK update resolves
+a reviewed, patched version. Neither reaches the packed output: the SDK is a
+devDependency and `npm pack` ships no `node_modules`. CI still audits the full
+development dependency graph — do not downgrade the SDK with
 `npm audit fix --force` or omit development dependencies to bypass that gate.
 
 Test files live next to the code they cover as `extensions/<name>/tests.ts` and
