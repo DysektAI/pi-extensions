@@ -85,8 +85,9 @@ can still run the type check and dependency-free unit tests.
 Scoped overrides patch the pinned SDK's development dependencies: `undici@8.12.2`
 and, since GHSA-g3hv-75wg-m249 (minimatch `<11.0.1`, DoS via globparts
 amplification, no 10.x fix) and the SDK's exact `minimatch@10.2.6` pin,
-`minimatch@11.0.3`. Both are vetted security pins from the upstream author
-(`isaacs`), carry no install scripts, and land inside the release cooldown
+`minimatch@11.0.3`. Both are vetted security pins: `minimatch` comes from
+`isaacs`, and `undici` from the Node.js/undici project. They carry no install
+scripts and land inside the release cooldown
 because the advisory has no fix in range; keep them until an SDK update resolves
 a reviewed, patched version. Neither reaches the packed output: the SDK is a
 devDependency and `npm pack` ships no `node_modules`. CI still audits the full

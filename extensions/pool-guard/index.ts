@@ -83,6 +83,7 @@ export default function poolGuard(pi: ExtensionAPI): void {
 
 	/** `pool.py <pool> --status`, memoised per reachability sweep. */
 	let statusCache = new Map<string, PoolSnapshot | undefined>();
+	/** Read one snapshot per pool within the current fallback sweep. */
 	const poolStatus = (pool: string): PoolSnapshot | undefined => {
 		if (statusCache.has(pool)) return statusCache.get(pool);
 		const result = spawnSync(python, [engine, pool, "--status"], {
@@ -94,9 +95,10 @@ export default function poolGuard(pi: ExtensionAPI): void {
 		statusCache.set(pool, snapshot);
 		return snapshot;
 	};
-	// A pool that refilled must be able to warn again next time it drains.
+	// Discard a snapshot when the pool has just served a request.
 	const forgetPool = (pool: string) => statusCache.delete(pool);
 
+	/** Collect unique fallback models in settings, scope, then registry order. */
 	const candidatesFor = (ctx: ExtensionContext): FallbackCandidate[] => {
 		const out: FallbackCandidate[] = [];
 		const add = (provider?: string, id?: string) => {
@@ -124,26 +126,37 @@ export default function poolGuard(pi: ExtensionAPI): void {
 	const avoidUnusablePool = async (ctx: ExtensionContext, provider: string | undefined) => {
 		const pool = provider ? pools.get(provider) : undefined;
 		if (!pool || switchedFrom.has(pool)) return;
-		forgetPool(pool);
+		statusCache = new Map();
 		const snapshot = poolStatus(pool);
 		if (!snapshot) return; // unknown: never move a session on a guess
 		if (snapshot.usable) return;
-		const target = pickFallback(provider, candidatesFor(ctx), pools, poolStatus);
-		if (!target) return;
-		const model = ctx.modelRegistry.find(target.provider, target.id);
-		if (!model) return;
-		switchedFrom.add(pool);
-		if (!(await pi.setModel(model))) {
-			switchedFrom.delete(pool);
+		const candidates = candidatesFor(ctx);
+		while (candidates.length > 0) {
+			const target = pickFallback(provider, candidates, pools, poolStatus);
+			if (!target) return;
+			candidates.splice(candidates.indexOf(target), 1);
+			const model = ctx.modelRegistry.find(target.provider, target.id);
+			if (!model) continue;
+			switchedFrom.add(pool);
+			let switched = false;
+			try {
+				switched = await pi.setModel(model);
+			} catch {
+				// Authentication can disappear after the registry advertised this model.
+				continue;
+			} finally {
+				if (!switched) switchedFrom.delete(pool);
+			}
+			if (!switched) continue;
+			const back = snapshot.nextRetryAt
+				? ` (keys retry after ${new Date(snapshot.nextRetryAt).toISOString()})`
+				: "";
+			ctx.ui.notify(
+				`${provider} pool has no usable keys${back}; switched to ${target.provider}/${target.id}.`,
+				"warning",
+			);
 			return;
 		}
-		const back = snapshot.nextRetryAt
-			? ` (keys retry after ${new Date(snapshot.nextRetryAt).toISOString()})`
-			: "";
-		ctx.ui.notify(
-			`${provider} pool has no usable keys${back}; switched to ${target.provider}/${target.id}.`,
-			"warning",
-		);
 	};
 
 	// Pi resolves the pool credential just before this event, so state.json names the key in use.
@@ -162,14 +175,16 @@ export default function poolGuard(pi: ExtensionAPI): void {
 		if (message.errorMessage) {
 			const provider = message.provider ?? ctx.model?.provider;
 			guard.onAssistantError(provider, message.errorMessage);
-			void avoidUnusablePool(ctx, provider).catch(() => {});
-			return;
+			return avoidUnusablePool(ctx, ctx.model?.provider).catch(() => {});
 		}
 		const pool = message.provider ? pools.get(message.provider) : undefined;
-		if (pool) forgetPool(pool);
+		if (pool) {
+			forgetPool(pool);
+			switchedFrom.delete(pool);
+		}
 	});
 	// A resumed session can already be pinned to a provider whose pool ran dry.
 	pi.on("session_start", (_event, ctx) => {
-		void avoidUnusablePool(ctx, ctx.model?.provider).catch(() => {});
+		return avoidUnusablePool(ctx, ctx.model?.provider).catch(() => {});
 	});
 }

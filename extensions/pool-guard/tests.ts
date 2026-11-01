@@ -79,6 +79,17 @@ describe("upstream retry window", () => {
 		assert.equal(retryAfterSeconds(undefined, "429 rate limit reached"), undefined);
 		assert.equal(retryAfterSeconds({}, undefined), undefined);
 	});
+	it("rejects retry windows above thirty days, non-finite values, and zero", () => {
+		const cap = 30 * 24 * 3600;
+		assert.equal(retryAfterSeconds({ "Retry-After": String(cap) }), cap);
+		for (const value of [String(cap + 1), "9".repeat(309)]) {
+			assert.equal(retryAfterSeconds({ "Retry-After": value }), undefined);
+			assert.equal(retryAfterSeconds({ "retry-after-ms": String(Number(value) * 1000) }), undefined);
+			assert.equal(retryAfterSeconds(undefined, `Server requested ${value}s retry delay`), undefined);
+		}
+		assert.equal(retryAfterSeconds({ "Retry-After": new Date(Date.now() + (cap + 60) * 1000).toUTCString() }), undefined);
+		assert.equal(retryAfterSeconds(undefined, "Server requested 0s retry delay"), undefined);
+	});
 });
 
 describe("pool status", () => {
@@ -88,6 +99,7 @@ describe("pool status", () => {
 			{ usable: false, nextRetryAt: 1_793_470_091_500 },
 		);
 		assert.deepEqual(parsePoolStatus('{"counts":{"active":2}}'), { usable: true, nextRetryAt: undefined });
+		assert.equal(parsePoolStatus('{"counts":{"active":0,"exhausted":1}}'), undefined);
 		assert.equal(parsePoolStatus("not json"), undefined);
 		assert.equal(parsePoolStatus('{"counts":{}}'), undefined);
 	});
@@ -163,6 +175,25 @@ describe("createGuard", () => {
 		assert.deepEqual(bare.calls, ["deepseek:exhausted:http 429:aaaa1111"]);
 	});
 
+	it("enriches a recent bench with a retry window only once", () => {
+		const { guard, calls, advance } = harness();
+		guard.onRequest("deepseek");
+		guard.onResponse("deepseek", 429);
+		advance(1);
+		guard.onAssistantError("deepseek", "Server requested 21437s retry delay. rate limit reached");
+		guard.onAssistantError("deepseek", "Server requested 21437s retry delay. rate limit reached");
+		guard.onResponse("deepseek", 429);
+		assert.deepEqual(calls, [
+			"deepseek:exhausted:http 429:aaaa1111",
+			"deepseek:exhausted:quota error:aaaa1111:21437",
+		]);
+		advance(DEDUPE_MS);
+		guard.onResponse("deepseek", 429);
+		guard.onAssistantError("deepseek", "Server requested 120s retry delay. rate limit reached");
+		assert.equal(calls.at(-1), "deepseek:exhausted:quota error:aaaa1111:120");
+		assert.equal(calls.length, 4);
+	});
+
 	it("reports the key that was in use when the request started", () => {
 		const { guard, calls, state } = harness();
 		guard.onRequest("deepseek");
@@ -219,10 +250,9 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 			poolGuard({ on: (name: string, fn: (e: unknown, c: unknown) => void) => handlers.set(name, fn) } as never);
 			const ctx = { model: { provider: "deepseek" } };
 			handlers.get("before_provider_request")!({ payload: {} }, ctx);
-			handlers.get("after_provider_response")!({ status: 429, headers: { "Retry-After": "21437" } }, ctx);
+			handlers.get("after_provider_response")!({ status: 429, headers: {} }, ctx);
 			handlers.get("after_provider_response")!({ status: 200, headers: {} }, ctx);
 			// A virtual model routed to the pooled provider: attribute by the message.
-			await new Promise((r) => setTimeout(r, DEDUPE_MS + 50));
 			handlers.get("message_end")!(
 				{
 					message: {
@@ -240,7 +270,7 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 			);
 			const log = await readFile(join(dir, "bin", "calls.log"), "utf8");
 			assert.deepEqual(log.trim().split(/\r?\n/), [
-				"deepseek --report exhausted --reason http 429 --key key#dddd4444 --until 21437",
+				"deepseek --report exhausted --reason http 429 --key key#dddd4444",
 				"deepseek --report ok --key key#dddd4444",
 				"deepseek --report exhausted --reason quota error --key key#dddd4444 --until 20239",
 			]);
@@ -357,4 +387,151 @@ describe("extension wiring", { skip: python ? false : "python3 not available" },
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+});
+
+/** Run real extension events against a mutable, isolated pool-status fixture. */
+async function withFallbackHarness(run: (h: {
+	emit(name: string, message?: unknown, provider?: string): Promise<void>;
+	status(pool: string, usable: boolean): Promise<void>;
+	picks: string[];
+	notices: string[];
+	available: { provider: string; id: string }[];
+	rejected: Set<string>;
+	missing: Set<string>;
+	throwing: Set<string>;
+	beforeSwitch?: () => Promise<void>;
+}) => Promise<void>) {
+	const dir = await mkdtemp(join(tmpdir(), "pool-guard-fallback-"));
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	try {
+		await mkdir(join(dir, "bin"));
+		for (const pool of ["opencode", "groq"]) await mkdir(join(dir, `${pool}-pool`));
+		await writeFile(join(dir, "models.json"), JSON.stringify({ providers: {
+			opencode: { apiKey: "!bash $HOME/.pi/agent/opencode-pool/oc-pool" },
+			groq: { apiKey: "!bash $HOME/.pi/agent/groq-pool/groq-pool" },
+		} }));
+		await writeFile(join(dir, "bin", "pool.py"), [
+			"import sys, pathlib",
+			"if '--status' in sys.argv:",
+			"    print(pathlib.Path(sys.argv[0]).with_name(sys.argv[1] + '.json').read_text())",
+		].join("\n"));
+		const status = (pool: string, usable: boolean) =>
+			writeFile(join(dir, "bin", `${pool}.json`), JSON.stringify({ usable }));
+		await status("opencode", false);
+		await status("groq", true);
+		const picks: string[] = [];
+		const notices: string[] = [];
+		const available = [{ provider: "groq", id: "llama" }, { provider: "morph", id: "flash" }];
+		const rejected = new Set<string>();
+		const missing = new Set<string>();
+		const throwing = new Set<string>();
+		const options: { beforeSwitch?: () => Promise<void> } = {};
+		const handlers = new Map<string, (e: unknown, c: unknown) => unknown>();
+		poolGuard({
+			on: (name: string, fn: (e: unknown, c: unknown) => unknown) => handlers.set(name, fn),
+			getSettings: () => ({}),
+			setModel: async (model: { provider: string; id: string }) => {
+				picks.push(`${model.provider}/${model.id}`);
+				await options.beforeSwitch?.();
+				if (throwing.has(model.provider)) throw new Error("Authentication removed");
+				return !rejected.has(model.provider);
+			},
+		} as never);
+		await run({
+			async emit(name, message, provider = "opencode") {
+				await handlers.get(name)!({ message }, {
+					model: { provider, id: "beam-free" },
+					modelRegistry: {
+						find: (p: string, id: string) => missing.has(p) ? undefined : { provider: p, id },
+						getAvailable: () => available,
+					},
+					scopedModels: [],
+					ui: { notify: (message: string) => notices.push(message) },
+				});
+			},
+			status, picks, notices, available, rejected, missing, throwing,
+			get beforeSwitch() { return options.beforeSwitch; },
+			set beforeSwitch(value) { options.beforeSwitch = value; },
+		});
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		await rm(dir, { recursive: true, force: true });
+	}
+}
+
+describe("fallback outage recovery", { skip: python ? false : "python3 not available" }, () => {
+	it("refreshes candidate statuses when a previously drained pool refills", async () => {
+		await withFallbackHarness(async (h) => {
+			h.available.splice(1);
+			await h.status("groq", false);
+			await h.emit("session_start");
+			assert.deepEqual(h.picks, []);
+			await h.status("groq", true);
+			await h.emit("session_start");
+			assert.deepEqual(h.picks, ["groq/llama"]);
+		});
+	});
+
+	it("re-arms after success and refreshes candidates that have since drained", async () => {
+		await withFallbackHarness(async (h) => {
+			await h.emit("session_start");
+			await h.emit("session_start");
+			assert.deepEqual(h.picks, ["groq/llama"]);
+			await h.emit("message_end", { role: "assistant", provider: "opencode" });
+			await h.status("groq", false);
+			await h.emit("session_start");
+			assert.deepEqual(h.picks, ["groq/llama", "morph/flash"]);
+			assert.equal(h.notices.length, 2);
+		});
+	});
+
+	it("keeps a routed session when its physical backend is drained", async () => {
+		await withFallbackHarness(async (h) => {
+			await h.emit("message_end", { role: "assistant", provider: "opencode", errorMessage: "rate limit reached" }, "my-router");
+			assert.deepEqual(h.picks, []);
+			assert.deepEqual(h.notices, []);
+		});
+	});
+
+	it("waits for the model switch and suppresses concurrent duplicate switches", async () => {
+		await withFallbackHarness(async (h) => {
+			let release!: () => void;
+			h.beforeSwitch = () => new Promise<void>((resolve) => { release = resolve; });
+			let finished = false;
+			const pending = h.emit("session_start").then(() => { finished = true; });
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			assert.equal(finished, false);
+			await h.emit("session_start");
+			assert.deepEqual(h.picks, ["groq/llama"]);
+			release();
+			await pending;
+			assert.equal(h.notices.length, 1);
+		});
+	});
+
+	it("can retry after every candidate throws or rejects", async () => {
+		await withFallbackHarness(async (h) => {
+			h.throwing.add("groq");
+			h.rejected.add("morph");
+			await h.emit("session_start");
+			assert.equal(h.notices.length, 0);
+			h.throwing.clear();
+			await h.emit("session_start");
+			assert.deepEqual(h.picks, ["groq/llama", "morph/flash", "groq/llama"]);
+			assert.equal(h.notices.length, 1);
+		});
+	});
+
+	for (const failure of ["missing", "rejected", "throwing"] as const) {
+		it(`tries later candidates when the first model is ${failure}`, async () => {
+			await withFallbackHarness(async (h) => {
+				h[failure].add("groq");
+				await h.emit("session_start");
+				assert.deepEqual(h.picks, failure === "missing" ? ["morph/flash"] : ["groq/llama", "morph/flash"]);
+				assert.equal(h.notices.length, 1);
+			});
+		});
+	}
 });

@@ -72,15 +72,25 @@ export function reasonForError(text: string): string | undefined {
 	return undefined;
 }
 
+const MAX_RETRY_SECONDS = 30 * 24 * 3600;
+
 /**
  * Upstream retry window in seconds, from response headers or provider error text.
  *
  * Headers win: `retry-after-ms`, then `retry-after` as seconds or an HTTP date. Pi
  * refuses to sleep past its own cap and reports the value it declined to wait for
  * ("Server requested 21437s retry delay (max: 60s)"), which is the fallback for a
- * provider whose reply reaches us only as error text.
+ * provider whose reply reaches us only as error text. Non-positive, non-finite,
+ * or over-thirty-day delays leave the engine in charge of its default cooldown.
  */
 export function retryAfterSeconds(headers: Record<string, string> | undefined, errorText?: string): number | undefined {
+	const seconds = parseRetryAfter(headers, errorText);
+	return seconds !== undefined && Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_RETRY_SECONDS
+		? seconds : undefined;
+}
+
+/** Read the preferred retry signal before applying the safety ceiling. */
+function parseRetryAfter(headers: Record<string, string> | undefined, errorText?: string): number | undefined {
 	const lower = new Map<string, string>();
 	for (const [name, value] of Object.entries(headers ?? {})) lower.set(name.toLowerCase(), value);
 	const millis = Number.parseFloat(lower.get("retry-after-ms") ?? "");
@@ -121,7 +131,8 @@ export function parsePoolStatus(raw: string): PoolSnapshot | undefined {
 	if (typeof status.usable === "boolean") return { usable: status.usable, nextRetryAt: retryAt };
 	// Engines before --until report counts only; an active key is still decisive.
 	const active = typeof status.counts?.active === "number" ? status.counts.active : undefined;
-	return active === undefined ? undefined : { usable: active > 0, nextRetryAt: retryAt };
+	// Zero active keys may still leave a cooled exhausted key usable for trial.
+	return active !== undefined && active > 0 ? { usable: true, nextRetryAt: retryAt } : undefined;
 }
 
 export interface FallbackCandidate {
@@ -171,15 +182,18 @@ export interface GuardDeps {
 /** Window in which one failure per pool is reported (pi retries re-pick keys). */
 export const DEDUPE_MS = 3000;
 
+/** Attribute request feedback to pool keys and deduplicate benches, allowing retry-window enrichment. */
 export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
-	const lastBench = new Map<string, number>();
+	const lastBench = new Map<string, { at: number; untilSec?: number }>();
 	// Key in use when the latest request to each pool started, so a late report
 	// cannot bench a different key that was picked in the meantime.
 	const inFlight = new Map<string, PoolCurrent>();
 	const bench = (pool: string, reason: string, untilSec?: number) => {
 		const at = deps.now();
-		if (at - (lastBench.get(pool) ?? -Infinity) < DEDUPE_MS) return;
-		lastBench.set(pool, at);
+		const previous = lastBench.get(pool);
+		const recent = previous !== undefined && at - previous.at < DEDUPE_MS;
+		if (recent && !(untilSec !== undefined && previous.untilSec === undefined)) return;
+		lastBench.set(pool, { at, untilSec });
 		deps.report(pool, "exhausted", reason, inFlight.get(pool)?.fingerprint, untilSec);
 	};
 	return {
