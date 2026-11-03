@@ -80,16 +80,15 @@ Run `npm run verify` before pushing. It runs the strict TypeScript check across
 all extensions and tests, then the unit tests. `npm run typecheck` runs only the
 type check. The pinned Pi SDK development dependencies provide the same types
 to the editor; run `npm ci` after updating this checkout.
-The Pi SDK requires Node 22.19 or newer for runtime integration tests. Node 20
-can still run the type check and dependency-free unit tests.
-Scoped overrides patch the pinned SDK's development dependencies: `undici@8.12.2`
-and, since GHSA-g3hv-75wg-m249 (minimatch `<11.0.1`, DoS via globparts
-amplification, no 10.x fix) and the SDK's exact `minimatch@10.2.6` pin,
-`minimatch@11.0.3`. Both are vetted security pins: `minimatch` comes from
+This package and the Pi 1.5 SDK require Node 22.19 or newer.
+Scoped overrides pin the SDK's development dependencies: `undici@8.12.3`
+and `minimatch@11.0.3`. The matcher retains the fix for
+GHSA-g3hv-75wg-m249 (minimatch `<11.0.1`, DoS via globparts amplification).
+Both are vetted security pins: `minimatch` comes from
 `isaacs`, and `undici` from the Node.js/undici project. They carry no install
-scripts and land inside the release cooldown
-because the advisory has no fix in range; keep them until an SDK update resolves
-a reviewed, patched version. Neither reaches the packed output: the SDK is a
+scripts. The minimatch override originally addressed Pi 1.4's exact vulnerable
+pin, which had no fix in range; Pi 1.5 also resolves patched versions.
+Neither reaches the packed output: the SDK is a
 devDependency and `npm pack` ships no `node_modules`. CI still audits the full
 development dependency graph — do not downgrade the SDK with
 `npm audit fix --force` or omit development dependencies to bypass that gate.
@@ -99,7 +98,7 @@ must only import from dependency-free modules (e.g. `pure.ts`, `client.ts`),
 never from `@earendil-works/*`. When you add a new test file, append it to the
 `test` script in `package.json` — CI (`.github/workflows/ci.yml`) runs
 `npm run verify` on every push to `main` and every PR, on Ubuntu, Windows, and
-macOS across Node 20 and 22.
+macOS across Node 22 and 24.
 
 ## Secrets
 

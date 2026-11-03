@@ -27,6 +27,6 @@ test("Pi SDK dependencies and transitive packages use the same reviewed release"
   for (const [, version] of sdk) assert.equal(version, "1.5.0");
   const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
   const packages = Object.entries(lock.packages as Record<string, { version?: string }>).filter(([name]) => /(?:^|\/)node_modules\/@earendil-works\/pi-/.test(name));
-  assert.ok(packages.length >= sdk.length);
+  for (const [name] of sdk) assert.equal(lock.packages[`node_modules/${name}`]?.version, "1.5.0", name);
   for (const [name, entry] of packages) assert.equal(entry.version, "1.5.0", name);
 });
