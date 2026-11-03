@@ -13,7 +13,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -24,11 +23,7 @@ import { Type } from "typebox";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-// NOTE: kept as a hand-written literal union (not derived from TaskStatusEnum
-// via Static<>) on purpose: the StringEnum TUnsafe wrapper defeats TS switch
-// exhaustiveness analysis, which makes taskIcon()/render() report spurious
-// "missing return" / "used before assigned" errors. The enum below must stay
-// in sync with this union (only four states; changes are rare).
+// Keep the enum below in sync with this union.
 type TaskStatus = "pending" | "in_progress" | "completed" | "deleted";
 
 interface Task {
@@ -57,12 +52,12 @@ interface TaskStoreSnapshot {
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 // Mirror of the TaskStatus union above (kept separate — see note there).
-const TaskStatusEnum = StringEnum([
+const TaskStatusEnum = Type.Enum([
 	"pending",
 	"in_progress",
 	"completed",
 	"deleted",
-] as const);
+] as const, { type: "string" });
 
 const TaskCreateParams = Type.Object({
 	subject: Type.String({
@@ -115,7 +110,7 @@ const UpdatePlanParams = Type.Object({
 	plan: Type.Array(
 		Type.Object({
 			step: Type.String({ description: "Step description" }),
-			status: StringEnum(["pending", "in_progress", "completed"] as const),
+			status: Type.Enum(["pending", "in_progress", "completed"] as const, { type: "string" }),
 		}),
 	),
 });

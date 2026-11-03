@@ -19,7 +19,7 @@
   },
   "homepage": "https://github.com/DysektAI/pi-extensions#readme",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "test": "tsx --test extensions/goal/tests.ts extensions/subagent/tests.ts extensions/subagent-models/tests.ts extensions/config/tests.ts extensions/tokenrouter/tests.ts extensions/typesafe/tests.ts extensions/thinking-label/tests.ts extensions/tool-headers/tests.ts extensions/path-links/tests.ts extensions/synthetic/tests.ts extensions/morph/tests.ts extensions/_shared/cache-first.tests.ts extensions/_shared/compaction-threshold.tests.ts tests/discord-package-boundary.ts tests/sdk-dependencies.ts extensions/dysektlb/tests.ts extensions/agentrouter-replay/tests.ts extensions/agentrouter/tests.ts extensions/kit-status/tests.ts extensions/auto-update/tests.ts extensions/pool-guard/tests.ts extensions/_shared/model-roles.tests.ts extensions/default-model-warning/tests.ts tests/settings-safety.ts tests/node-version.tests.ts",
@@ -28,10 +28,10 @@
     "typecheck": "tsc --pretty false"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-tui": "1.4.0",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
     "@types/node": "22.20.5",
     "@types/proper-lockfile": "4.1.4",
     "tsx": "^4.23.12",
@@ -54,11 +54,11 @@
   ],
   "overrides": {
     "@earendil-works/chord": "1.0.0",
-    "@earendil-works/pi-codemode": "1.4.0",
-    "@earendil-works/pi-mcp": "1.4.0",
-    "@earendil-works/pi-telemetry": "1.4.0",
-    "@earendil-works/pi-coding-agent@1.4.0": {
-      "undici": "8.12.2",
+    "@earendil-works/pi-codemode": "1.5.0",
+    "@earendil-works/pi-mcp": "1.5.0",
+    "@earendil-works/pi-telemetry": "1.5.0",
+    "@earendil-works/pi-coding-agent@1.5.0": {
+      "undici": "8.12.3",
       "minimatch": "11.0.3"
     }
   },
