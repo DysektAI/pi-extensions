@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { ask, buildRequest, config, precheck } from "./client.js";
 
@@ -52,7 +51,7 @@ export default function typesafeExtension(pi: ExtensionAPI) {
       state: Type.String({ description: "Plain text or a JSON-encoded object/array to evaluate." }),
       questions: Type.Array(Type.Object({
         id: Type.Optional(Type.String({ minLength: 1, description: "Unique ID; defaults to q1, q2, etc." })),
-        type: StringEnum(["noul", "choice", "score"] as const),
+        type: Type.Enum(["noul", "choice", "score"] as const, { type: "string" }),
         instructions: Type.String({ minLength: 1, description: "One specific judgment to evaluate." }),
         criteria: Type.Optional(Type.Unknown({ description: "Noul: optional true/false descriptions. Choice: option map. Score: ordered array of 2–10 descriptions." })),
       }), { minItems: 1, maxItems: 64 }),
