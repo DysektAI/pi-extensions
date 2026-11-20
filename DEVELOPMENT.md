@@ -80,14 +80,14 @@ Run `npm run verify` before pushing. It runs the strict TypeScript check across
 all extensions and tests, then the unit tests. `npm run typecheck` runs only the
 type check. The pinned Pi SDK development dependencies provide the same types
 to the editor; run `npm ci` after updating this checkout.
-This package and the Pi 1.5 SDK require Node 22.19 or newer.
-Scoped overrides pin the SDK's development dependencies: `undici@8.12.3`
-and `minimatch@11.0.3`. The matcher retains the fix for
-GHSA-g3hv-75wg-m249 (minimatch `<11.0.1`, DoS via globparts amplification).
+This package and the Pi 1.6 SDK require Node 22.19 or newer.
+Scoped overrides pin the SDK's development dependencies: `undici@8.12.4`
+and `minimatch@11.0.8`. The matcher addresses GHSA-g3hv-75wg-m249
+and the later GHSA-cf2h-pxjq-68xw and GHSA-hqmv-qgp3-jx75 advisories.
 Both are vetted security pins: `minimatch` comes from
 `isaacs`, and `undici` from the Node.js/undici project. They carry no install
-scripts. The minimatch override originally addressed Pi 1.4's exact vulnerable
-pin, which had no fix in range; Pi 1.5 also resolves patched versions.
+scripts. Pi 1.6.0 pins the affected `minimatch@11.0.3`. This override
+applies to the unbundled SDK used for development.
 Neither reaches the packed output: the SDK is a
 devDependency and `npm pack` ships no `node_modules`. CI still audits the full
 development dependency graph — do not downgrade the SDK with
