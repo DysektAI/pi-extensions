@@ -59,7 +59,7 @@
     "@earendil-works/pi-telemetry": "1.6.0",
     "@earendil-works/pi-coding-agent@1.6.0": {
       "undici": "8.12.4",
-      "minimatch": "11.0.3"
+      "minimatch": "11.0.8"
     }
   },
   "dependencies": {
