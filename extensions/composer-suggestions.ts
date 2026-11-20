@@ -7,7 +7,7 @@ import { registerConfigSetting } from "./_shared/config-settings.ts";
 
 const SETTING = "composer-suggestions";
 const ACCEPT_KEY = "alt+j";
-const INSTRUCTIONS = `Predict one short message the user might type next. Write from the user's perspective and in their language. Use only the supplied exchange as context. If there's no clear follow-up, output null. Otherwise output only a JSON string containing one plain-text request of at most 160 characters. Never suggest a shell command, slash command, or disclosure of credentials.`;
+const INSTRUCTIONS = `Predict one short message the user might type next. Write a plain-language request from the user's perspective and in their language. Use only the supplied exchange as context. If the reply recommends or offers a concrete next action, suggest that action as a request. If there's no clear follow-up or it requires sharing a secret, output null. Otherwise output only a JSON string of at most 160 characters.`;
 
 type MessageContent = string | readonly { type: string; text?: string }[];
 

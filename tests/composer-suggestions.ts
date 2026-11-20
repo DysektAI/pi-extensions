@@ -22,7 +22,7 @@ test("composer suggestions use bounded exchange text and insert only into an emp
 	let widget: unknown;
 	let output = JSON.stringify("Run the focused tests.");
 	let pause: Promise<void> | undefined;
-	const calls: unknown[] = [];
+	const calls: { messages: { content: string }[] }[] = [];
 	const ctx = {
 		mode: "tui",
 		hasUI: true,
@@ -37,11 +37,11 @@ test("composer suggestions use bounded exchange text and insert only into an emp
 				{ type: "message", message: { role: "user", content: "Earlier unrelated instruction" } },
 				{ type: "message", message: { role: "user", content: "Fix it " + "x".repeat(1200) } },
 				{ type: "message", message: { role: "toolResult", content: [{ type: "text", text: "private tool output" }] } },
-				{ type: "message", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Fixed the bug." }] } },
+				{ type: "message", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Fixed the bug. " + "y".repeat(1800) }] } },
 			],
 		},
 		modelRegistry: {
-			complete: async (_model: unknown, context: unknown) => {
+			complete: async (_model: unknown, context: (typeof calls)[number]) => {
 				calls.push(context);
 				await pause;
 				return { stopReason: "stop", content: [{ type: "text", text: output }] };
@@ -60,10 +60,11 @@ test("composer suggestions use bounded exchange text and insert only into an emp
 		getConfigSetting("composer-suggestions")!.set("on");
 		await settle();
 		assert.equal(calls.length, 1);
-		const sent = JSON.stringify(calls[0]);
-		assert.match(sent, /Fix it /);
-		assert.match(sent, /Fixed the bug/);
-		assert.doesNotMatch(sent, /private tool output|Earlier unrelated instruction|x{1000}/);
+		assert.equal(calls[0].messages.length, 1);
+		assert.deepEqual(JSON.parse(calls[0].messages[0].content), {
+			request: "Fix it " + "x".repeat(993),
+			reply: "Fixed the bug. " + "y".repeat(1585),
+		});
 		assert.ok(widget);
 		assert.equal(editor, "");
 		editor = "My own draft";
@@ -74,11 +75,13 @@ test("composer suggestions use bounded exchange text and insert only into an emp
 		assert.equal(editor, "Run the focused tests.");
 		assert.equal(widget, undefined);
 		editor = "";
-		output = JSON.stringify("/exit");
-		await settle();
-		assert.equal(widget, undefined);
-		accept(ctx);
-		assert.equal(editor, "");
+		for (const rejected of ["/exit", "!git status", "hello\nworld"]) {
+			output = JSON.stringify(rejected);
+			await settle();
+			assert.equal(widget, undefined);
+			accept(ctx);
+			assert.equal(editor, "");
+		}
 		output = JSON.stringify("Run the focused tests.");
 		await settle();
 		assert.ok(widget);
