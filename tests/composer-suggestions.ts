@@ -48,15 +48,16 @@ test("composer suggestions use bounded exchange text and insert only into an emp
 			},
 		},
 	} as unknown as ExtensionContext;
-	const settle = async () => {
+	const settle = async (expectedRequests = 1) => {
+		const before = calls.length;
 		events.get("agent_settled")!({ aborted: false }, ctx);
 		await setImmediate();
+		assert.equal(calls.length - before, expectedRequests);
 	};
 	try {
 		configure(pi);
 		assert.ok(accept);
-		await settle();
-		assert.equal(calls.length, 0);
+		await settle(0);
 		getConfigSetting("composer-suggestions")!.set("on");
 		await settle();
 		assert.equal(calls.length, 1);
