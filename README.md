@@ -13,6 +13,18 @@ Install once, then customize via `/config` or granular package filters.
 >
 > **Discord migration (v0.6.0):** After that gate passes, install `pi install git:github.com/DysektAI/pi-cord` before updating this package. Existing Discord environment variables and `discord.json` paths remain supported. The standalone package retains explicit, unsupported user-token access, adds confirmation for every write, and documents Discord's account-policy risks.
 
+
+## Composer suggestions
+
+Toggle **Composer suggestions** in `/config` or run `/config composer-suggestions`.
+When enabled, Pi asks the current session model for a possible next request after
+a completed reply. The extra request contains bounded text from the last user
+message and final reply. It sends no tool output, attachments, or earlier turns.
+
+Press **Alt+J** to insert the draft into an empty composer. Edit it as needed and
+press **Enter** to send. The setting is off by default and applies to the current
+Pi profile once enabled.
+
 ## Installation
 
 ```bash
