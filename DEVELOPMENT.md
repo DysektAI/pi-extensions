@@ -81,7 +81,7 @@ all extensions and tests, then the unit tests. `npm run typecheck` runs only the
 type check. The pinned Pi SDK development dependencies provide the same types
 to the editor; run `npm ci` after updating this checkout.
 This package and the Pi 1.5 SDK require Node 22.19 or newer.
-Scoped overrides pin the SDK's development dependencies: `undici@8.12.3`
+Scoped overrides pin the SDK's development dependencies: `undici@8.12.4`
 and `minimatch@11.0.3`. The matcher retains the fix for
 GHSA-g3hv-75wg-m249 (minimatch `<11.0.1`, DoS via globparts amplification).
 Both are vetted security pins: `minimatch` comes from
