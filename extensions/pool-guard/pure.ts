@@ -72,6 +72,37 @@ export function reasonForError(text: string): string | undefined {
 	return undefined;
 }
 
+function openRouterFailure(text: string, status?: number): { reason?: string; preserveKey?: boolean } {
+	// Pi surfaces either a bare JSON error or an HTTP status followed by that JSON.
+	const jsonStart = text.indexOf("{");
+	let detail: { code?: unknown; message?: unknown; metadata?: { limit_source?: unknown; scope?: unknown } } | undefined;
+	if (jsonStart !== -1) {
+		try {
+			const body = JSON.parse(text.slice(jsonStart));
+			detail = body.error ?? body;
+		} catch {
+			// Some transport errors only have a status or plain text.
+		}
+	}
+	const code = typeof detail?.code === "number" ? detail.code : status ?? Number(/\b(401|402|403|429)\b/.exec(
+		jsonStart === -1 ? text : text.slice(0, jsonStart),
+	)?.[1]);
+	const source = detail?.metadata?.limit_source;
+	const keyBudget = source === "openrouter_key_limit" ||
+		(source === "openrouter_guardrail_budget" && detail?.metadata?.scope === "api_key");
+	const message = typeof detail?.message === "string" ? detail.message : text;
+	if (
+		(typeof source === "string" && source.startsWith("upstream_")) ||
+		source === "openrouter_free_tier_per_minute" ||
+		source === "openrouter_in_flight_budget" ||
+		(code === 429 && /rate.limited upstream|^provider returned error$/i.test(message)) ||
+		(code === 403 && !keyBudget)
+	) return { preserveKey: true };
+	if (code === 403) return { reason: "http 403 key budget" };
+	const result = outcomeForStatus(code);
+	return { reason: result?.outcome === "exhausted" ? result.reason : reasonForError(message) };
+}
+
 const MAX_RETRY_SECONDS = 30 * 24 * 3600;
 
 /**
@@ -179,22 +210,22 @@ export interface GuardDeps {
 	now(): number;
 }
 
-/** Window in which one failure per pool is reported (pi retries re-pick keys). */
+/** Window for deduplicating feedback about the same key. */
 export const DEDUPE_MS = 3000;
 
 /** Attribute request feedback to pool keys and deduplicate benches, allowing retry-window enrichment. */
 export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
-	const lastBench = new Map<string, { at: number; untilSec?: number }>();
+	const lastBench = new Map<string, { fingerprint?: string; at: number; untilSec?: number }>();
 	// Key in use when the latest request to each pool started, so a late report
 	// cannot bench a different key that was picked in the meantime.
-	const inFlight = new Map<string, PoolCurrent>();
-	const bench = (pool: string, reason: string, untilSec?: number) => {
+	const inFlight = new Map<string, PoolCurrent & { status?: number; headers?: Record<string, string> }>();
+	const bench = (pool: string, reason: string, untilSec?: number, fingerprint = inFlight.get(pool)?.fingerprint) => {
 		const at = deps.now();
 		const previous = lastBench.get(pool);
-		const recent = previous !== undefined && at - previous.at < DEDUPE_MS;
+		const recent = previous !== undefined && previous.fingerprint === fingerprint && at - previous.at < DEDUPE_MS;
 		if (recent && !(untilSec !== undefined && previous.untilSec === undefined)) return;
-		lastBench.set(pool, { at, untilSec });
-		deps.report(pool, "exhausted", reason, inFlight.get(pool)?.fingerprint, untilSec);
+		lastBench.set(pool, { fingerprint, at, untilSec });
+		deps.report(pool, "exhausted", reason, fingerprint, untilSec);
 	};
 	return {
 		onRequest(provider: string | undefined): void {
@@ -204,6 +235,11 @@ export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
 		onResponse(provider: string | undefined, status: number, headers?: Record<string, string>): void {
 			const pool = provider ? pools.get(provider) : undefined;
 			if (!pool) return;
+			if (pool === "openrouter") {
+				const request = inFlight.get(pool);
+				if (request) Object.assign(request, { status, headers });
+				return;
+			}
 			const result = outcomeForStatus(status);
 			if (!result) return;
 			if (result.outcome === "ok") {
@@ -213,11 +249,35 @@ export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
 			}
 			bench(pool, result.reason, retryAfterSeconds(headers));
 		},
-		onAssistantError(provider: string | undefined, errorText: string): void {
+		/** Return whether the caller should check for an unusable pool. */
+		onAssistantError(provider: string | undefined, errorText: string, selectedProvider = provider): boolean {
 			const pool = provider ? pools.get(provider) : undefined;
-			if (!pool || !errorText) return;
+			if (!pool || !errorText) return true;
+			if (pool === "openrouter") {
+				const request = inFlight.get(pool);
+				const { reason, preserveKey } = openRouterFailure(errorText, request?.status);
+				if (reason) {
+					// A virtual route may expose the physical provider only on the assistant message.
+					const fingerprint = request?.fingerprint ??
+						(selectedProvider !== provider ? deps.current(pool).fingerprint : undefined);
+					if (fingerprint) bench(pool, reason, retryAfterSeconds(request?.headers, errorText), fingerprint);
+				}
+				inFlight.delete(pool);
+				return !preserveKey;
+			}
 			const reason = reasonForError(errorText);
 			if (reason) bench(pool, reason, retryAfterSeconds(undefined, errorText));
+			return true;
+		},
+		onAssistantSuccess(provider: string | undefined, model: string | undefined): void {
+			if (!provider || pools.get(provider) !== "openrouter") return;
+			const used = inFlight.get("openrouter");
+			inFlight.delete("openrouter");
+			// The active OpenRouter list requires paid credits. A free response does not verify them.
+			if (used?.trial && used.fingerprint && model && model !== "openrouter/free" && !model.endsWith(":free")) {
+				deps.report("openrouter", "ok", "", used.fingerprint);
+				lastBench.delete("openrouter");
+			}
 		},
 	};
 }
