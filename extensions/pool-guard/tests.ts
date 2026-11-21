@@ -133,11 +133,11 @@ describe("pool status", () => {
 });
 
 describe("createGuard", () => {
-	function harness(current = { fingerprint: "aaaa1111", trial: false }) {
+	function harness(current = { fingerprint: "aaaa1111", trial: false }, provider = "deepseek") {
 		const calls: string[] = [];
 		let clock = 0;
 		const state = { ...current };
-		const guard = createGuard(new Map([["deepseek", "deepseek"]]), {
+		const guard = createGuard(new Map([[provider, provider]]), {
 			report: (pool, outcome, reason, fp, until) =>
 				calls.push(`${pool}:${outcome}:${reason}:${fp ?? "-"}${until === undefined ? "" : `:${until}`}`),
 			current: () => ({ ...state }),
@@ -145,6 +145,53 @@ describe("createGuard", () => {
 		});
 		return { guard, calls, state, advance: (ms: number) => (clock += ms) };
 	}
+
+	it("reports failures for two different credentials within the dedupe window", () => {
+		const { guard, calls, state } = harness();
+		guard.onRequest("deepseek");
+		guard.onResponse("deepseek", 429);
+		state.fingerprint = "bbbb2222";
+		guard.onRequest("deepseek");
+		guard.onResponse("deepseek", 429);
+		guard.onAssistantError("deepseek", "rate limit reached");
+		assert.deepEqual(calls, ["deepseek:exhausted:http 429:aaaa1111", "deepseek:exhausted:http 429:bbbb2222"]);
+	});
+
+	it("preserves the key for upstream OpenRouter limits and policy denials", () => {
+		const { guard, calls } = harness(undefined, "openrouter");
+		guard.onRequest("openrouter");
+		guard.onResponse("openrouter", 429);
+		assert.equal(guard.onAssistantError("openrouter", '429: {"message":"Provider returned error","code":429,"metadata":{"limit_source":"upstream_provider_shared_pool","previous_errors":[{"message":"You exceeded your current quota"}]}}'), false);
+		guard.onRequest("openrouter");
+		guard.onResponse("openrouter", 403);
+		assert.equal(guard.onAssistantError("openrouter", '403: {"message":"The request is prohibited due to a violation of provider Terms Of Service.","code":403,"metadata":{"provider_name":null}}'), false);
+		assert.deepEqual(calls, []);
+	});
+
+	it("benches the request's OpenRouter key for a credit error and honors its retry window", () => {
+		const { guard, calls, state } = harness(undefined, "openrouter");
+		guard.onRequest("openrouter");
+		state.fingerprint = "bbbb2222";
+		guard.onResponse("openrouter", 402, { "Retry-After": "123" });
+		assert.deepEqual(calls, []);
+		assert.equal(guard.onAssistantError("openrouter", '402: {"message":"Insufficient credits.","code":402,"metadata":{"limit_source":"openrouter_credits"}}'), true);
+		guard.onRequest("openrouter");
+		assert.equal(guard.onAssistantError("openrouter", '403: {"error":{"code":403,"metadata":{"limit_source":"openrouter_key_limit"}}}'), true);
+		assert.deepEqual(calls, ["openrouter:exhausted:http 402:aaaa1111:123", "openrouter:exhausted:http 403 auth:bbbb2222"]);
+	});
+
+	it("promotes an OpenRouter trial only after a successful paid-model response", () => {
+		const { guard, calls } = harness({ fingerprint: "aaaa1111", trial: true }, "openrouter");
+		guard.onRequest("openrouter");
+		guard.onResponse("openrouter", 200);
+		assert.deepEqual(calls, []);
+		guard.onAssistantSuccess("openrouter", "openrouter/free");
+		assert.deepEqual(calls, []);
+		guard.onRequest("openrouter");
+		guard.onResponse("openrouter", 200);
+		guard.onAssistantSuccess("openrouter", "google/gemini-4-neon");
+		assert.deepEqual(calls, ["openrouter:ok::aaaa1111"]);
+	});
 
 	it("benches once per failure window and ignores unpooled providers", () => {
 		const { guard, calls, advance } = harness();

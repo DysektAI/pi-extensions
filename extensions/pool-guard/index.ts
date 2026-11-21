@@ -1,9 +1,10 @@
 /**
  * pool-guard: request feedback for ai-agent-kit key pools.
  *
- * When a pooled provider rejects a request (401/402/403/429, or quota/auth error
- * text), the pool's current key is benched so the next request — including Pi's
- * automatic retry — gets another key. The upstream `Retry-After` travels with that
+ * When a pooled provider rejects a credential or reports a quota failure, the
+ * key is benched so the next request gets another key. OpenRouter feedback waits
+ * for the assistant error so provider-wide limits and policy denials keep the
+ * existing key. The upstream `Retry-After` travels with that
  * bench (`--until`), so a quota that resets in hours is not re-probed every
  * cooldown. A key retried from exhausted.txt that succeeds is promoted back. All
  * key handling stays in `<agentDir>/bin/pool.py`; this extension never reads key
@@ -170,12 +171,17 @@ export default function poolGuard(pi: ExtensionAPI): void {
 	// to a pooled provider is only attributed here: assistant messages record the
 	// physical provider the router picked.
 	pi.on("message_end", (event, ctx) => {
-		const message = event.message as { role?: string; provider?: string; errorMessage?: string };
+		const message = event.message;
 		if (message.role !== "assistant") return;
 		if (message.errorMessage) {
 			const provider = message.provider ?? ctx.model?.provider;
-			guard.onAssistantError(provider, message.errorMessage);
-			return avoidUnusablePool(ctx, ctx.model?.provider).catch(() => {});
+			if (guard.onAssistantError(provider, message.errorMessage)) {
+				return avoidUnusablePool(ctx, ctx.model?.provider).catch(() => {});
+			}
+			return;
+		}
+		if (message.stopReason !== "aborted" && message.stopReason !== "error") {
+			guard.onAssistantSuccess(message.provider, message.model);
 		}
 		const pool = message.provider ? pools.get(message.provider) : undefined;
 		if (pool) {
