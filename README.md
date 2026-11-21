@@ -17,13 +17,24 @@ Install once, then customize via `/config` or granular package filters.
 ## Composer suggestions
 
 Toggle **Composer suggestions** in `/config` or run `/config composer-suggestions`.
-When enabled, Pi asks the current session model for a possible next request after
-a completed reply. The extra request contains bounded text from the last user
-message and final reply. It sends no tool output, attachments, or earlier turns.
+When enabled, Pi automatically offers one possible next request after a completed
+reply. It sends the session model a bounded excerpt of recent requests, the
+reply, and an active goal if available. It saves suggestions with the reply so
+they can be recovered when you reopen that session branch.
 
-Press **Alt+J** to insert the draft into an empty composer. Edit it as needed and
-press **Enter** to send. The setting is off by default and applies to the current
-Pi profile once enabled.
+With an empty composer, press **Tab** or **Right Arrow** to insert the selected
+draft, or use **Alt+J**. Edit the draft and press **Enter** to send. Use
+**Alt+Up / Alt+Down** to cycle through saved drafts without making requests.
+Run **`/suggest`** for another draft. Pi asks before making that request when
+recent cache evidence is missing.
+
+Refreshes keep the reply context and previous suggestions in separate messages
+so the earlier prompt remains a reusable prefix. Pi asks again when the rolling
+list of earlier suggestions drops its oldest entry. It uses the SDK's reported
+cache reads and writes as evidence, including for OpenAI Responses, Chat
+Completions, and Morph. A subsequent request can still miss the provider's
+cache. Automatic and manual generation both use limited context and can incur
+provider usage. The setting is off by default.
 
 ## Installation
 

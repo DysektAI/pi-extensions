@@ -4,99 +4,291 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Editor } from "@earendil-works/pi-tui";
 import configure from "../extensions/composer-suggestions.ts";
 import { getConfigSetting } from "../extensions/_shared/config-settings.ts";
 
-test("composer suggestions use bounded exchange text and insert only into an empty editor", async () => {
+test("composer preserves grounded drafts, gates cache-uncertain refreshes and keeps editor keys local", async (t) => {
 	const folder = mkdtempSync(join(tmpdir(), "pi-composer-test-"));
 	const previousDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = folder;
 	const events = new Map<string, (event: object, ctx: ExtensionContext) => void>();
-	let accept: ((ctx: ExtensionContext) => void) | undefined;
+	let refresh: () => Promise<void>;
+	let editor = "";
+	const composer = { actionHandlers: new Map([["app.clear", () => {}]]) };
+	let focus: unknown = composer;
+	let overlay = false;
+	let render: ((width: number) => string[]) | undefined;
+	let onKey: ((data: string) => { consume?: boolean } | undefined) | undefined;
+	let confirmation = false;
+	let beforeConfirm: (() => void) | undefined;
+	let confirmations = 0;
+	let queued = false;
+	let output = JSON.stringify("Run the parser regression test.");
+	let cacheRead = 0;
+	let cacheWrite = 0;
+	let pause: Promise<void> | undefined;
+	let now = 10_000_000;
+	t.mock.method(Date, "now", () => now);
+	const notices: string[] = [];
+	const calls: { content: string; messages: string[]; key: string; retries: number; signal: AbortSignal; headers?: Record<string, string> }[] = [];
+	const model = { id: "gpt-test", provider: "openai", api: "openai-responses", baseUrl: "https://example.invalid" };
+	const branch = [
+		{ id: "unrelated", type: "message", message: { role: "user", content: "Old, unrelated request" } },
+		{ id: "constraint", type: "message", message: { role: "user", content: "Saved sessions must still work." } },
+		{ id: "decision", type: "message", message: { role: "user", content: "Use the existing parser." } },
+		{ id: "user", type: "message", message: { role: "user", content: "Fix the parser." } },
+		{ id: "tool", type: "message", message: { role: "toolResult", content: [{ type: "text", text: "private tool output" }] } },
+		{ id: "assistant", type: "message", message: { role: "assistant", stopReason: "stop", content: "Fixed the parser. " + "x".repeat(3000) + " The regression test is still pending." } },
+		{ id: "goal", type: "custom", customType: "goal-state", data: { status: "active", condition: "Ship the parser fix." } },
+	];
+	const saved: unknown[] = [];
+	const siblings: unknown[] = [];
 	const pi = {
 		on: (event: string, handler: NonNullable<ReturnType<typeof events.get>>) => events.set(event, handler),
-		registerShortcut: (_key: string, { handler }: { handler: typeof accept }) => { accept = handler; },
+		appendEntry: (customType: string, data: unknown) => saved.push({ type: "custom", customType, data }),
+		registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) => {
+			assert.equal(name, "suggest");
+			refresh = () => command.handler("", ctx);
+		},
 	} as unknown as ExtensionAPI;
-	let editor = "";
-	let widget: unknown;
-	let output = JSON.stringify("Run the focused tests.");
-	let pause: Promise<void> | undefined;
-	const calls: { messages: { content: string }[] }[] = [];
 	const ctx = {
 		mode: "tui",
 		hasUI: true,
-		model: {},
+		model,
+		isIdle: () => true,
+		hasPendingMessages: () => queued,
 		ui: {
 			getEditorText: () => editor,
-			setEditorText: (text: string) => { editor = text; },
-			setWidget: (_id: string, content: unknown) => { widget = content; },
-		},
-		sessionManager: {
-			getBranch: () => [
-				{ type: "message", message: { role: "user", content: "Earlier unrelated instruction" } },
-				{ type: "message", message: { role: "user", content: "Fix it " + "x".repeat(1200) } },
-				{ type: "message", message: { role: "toolResult", content: [{ type: "text", text: "private tool output" }] } },
-				{ type: "message", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Fixed the bug. " + "y".repeat(1800) }] } },
-			],
-		},
-		modelRegistry: {
-			complete: async (_model: unknown, context: (typeof calls)[number]) => {
-				calls.push(context);
-				await pause;
-				return { stopReason: "stop", content: [{ type: "text", text: output }] };
+			setEditorText: (value: string) => { editor = value; },
+			confirm: async () => { confirmations++; beforeConfirm?.(); return confirmation; },
+			notify: (notice: string) => notices.push(notice),
+			onTerminalInput: (handler: typeof onKey) => { onKey = handler; return () => { onKey = undefined; }; },
+			setWidget: (_id: string, factory?: (tui: object, theme: object) => { render: typeof render }) => {
+				render = factory?.({
+					getFocusedComponent: () => focus,
+					hasOverlay: () => overlay,
+					requestRender() {},
+				}, { fg: (_color: string, label: string) => label }).render;
 			},
 		},
+		sessionManager: {
+			getBranch: () => [...branch, ...saved],
+			getEntries: () => [...branch, ...saved, ...siblings],
+			getSessionId: () => "thread",
+		},
+		modelRegistry: {
+			streamSimple: (_model: object, request: { messages: { content: string }[] }, options: {
+				sessionId: string; maxRetries: number; signal: AbortSignal; headers?: Record<string, string>;
+			}) => ({
+				result: async () => {
+					calls.push({ content: request.messages[0].content, messages: request.messages.map((message) => message.content), key: options.sessionId, retries: options.maxRetries, signal: options.signal, headers: options.headers });
+					await pause;
+					return {
+						stopReason: "stop", model: model.id, provider: model.provider,
+						usage: { input: 300, cacheRead, cacheWrite },
+						content: [{ type: "text", text: output }],
+					};
+				},
+			}),
+		},
 	} as unknown as ExtensionContext;
-	const settle = async (expectedRequests = 1) => {
+	const emit = (event: string, data = {}) => events.get(event)!(data, ctx);
+	const settle = async (expectedRequests: number) => {
 		const before = calls.length;
-		events.get("agent_settled")!({ aborted: false }, ctx);
+		emit("agent_settled", { aborted: false });
 		await setImmediate();
 		assert.equal(calls.length - before, expectedRequests);
 	};
+	const widget = () => render?.(120).join("\n");
 	try {
 		configure(pi);
-		assert.ok(accept);
+		emit("session_start");
 		await settle(0);
 		getConfigSetting("composer-suggestions")!.set("on");
-		await settle();
+		queued = true;
+		await settle(0);
+		queued = false;
+		editor = "Preserve the text I just typed";
+		await settle(1);
+		assert.match(calls[0].content, /Saved sessions must still work\./);
+		assert.match(calls[0].content, /Ship the parser fix\./);
+		assert.match(calls[0].content, /Fixed the parser\./);
+		assert.match(calls[0].content, /The regression test is still pending\./);
+		assert.doesNotMatch(calls[0].content, /private tool output|Old, unrelated request/);
+		assert.equal(JSON.parse(calls[0].content).reply.length, 2400);
+		assert.equal(calls[0].retries, 0);
+		assert.equal(calls[0].headers, undefined);
+		assert.equal(widget(), "");
+		assert.equal(onKey?.("\t"), undefined);
+		assert.equal(editor, "Preserve the text I just typed");
+
+		editor = "";
+		assert.match(widget()!, /Run the parser regression test\./);
+		overlay = true;
+		assert.equal(onKey?.("\t"), undefined);
+		overlay = false;
+		focus = {};
+		assert.equal(onKey?.("\x1b[C"), undefined);
+		focus = Object.create(Editor.prototype);
+		assert.equal(widget(), "");
+		assert.equal(onKey?.("\t"), undefined);
+		focus = Object.assign(Object.create(CustomEditor.prototype), { actionHandlers: new Map() });
+		assert.equal(onKey?.("\t"), undefined);
+		focus = composer;
+		assert.deepEqual(onKey?.("\t"), { consume: true });
+		assert.equal(editor, "Run the parser regression test.");
 		assert.equal(calls.length, 1);
-		assert.equal(calls[0].messages.length, 1);
-		assert.deepEqual(JSON.parse(calls[0].messages[0].content), {
-			request: "Fix it " + "x".repeat(993),
-			reply: "Fixed the bug. " + "y".repeat(1585),
-		});
-		assert.ok(widget);
-		assert.equal(editor, "");
-		editor = "My own draft";
-		accept(ctx);
-		assert.equal(editor, "My own draft");
 		editor = "";
-		accept(ctx);
-		assert.equal(editor, "Run the focused tests.");
-		assert.equal(widget, undefined);
+
+		await refresh!();
+		assert.equal(confirmations, 1);
+		assert.equal(calls.length, 1);
+		confirmation = true;
+		cacheRead = 128;
+		output = JSON.stringify("Check that the fix works with older saved sessions.");
+		await refresh!();
+		assert.equal(confirmations, 2);
+		assert.equal(calls.length, 2);
+		assert.equal(calls[1].key, calls[0].key);
+		assert.deepEqual(calls[1].messages, [...calls[0].messages, 'Earlier suggestion to avoid: "Run the parser regression test."']);
+		assert.match(widget()!, /2\/2/);
+
+		assert.deepEqual(onKey?.("\x1b[1;3A"), { consume: true });
+		assert.match(widget()!, /1\/2/);
+		assert.deepEqual(onKey?.("\x1b[C"), { consume: true });
+		assert.equal(editor, "Run the parser regression test.");
+		assert.equal(calls.length, 2);
 		editor = "";
-		for (const rejected of ["/exit", "!git status", "hello\nworld"]) {
-			output = JSON.stringify(rejected);
-			await settle();
-			assert.equal(widget, undefined);
-			accept(ctx);
-			assert.equal(editor, "");
-		}
-		output = JSON.stringify("Run the focused tests.");
-		await settle();
-		assert.ok(widget);
-		events.get("session_before_tree")!({}, ctx);
-		assert.equal(widget, undefined);
+
+		confirmation = false;
+		output = JSON.stringify("RUN the parser regression test!");
+		await refresh!();
+		assert.equal(confirmations, 2);
+		assert.equal(calls.length, 3);
+		assert.deepEqual(calls[2].messages.slice(0, -1), calls[1].messages);
+		assert.equal(saved.length, 3);
+		assert.match(notices.at(-1)!, /No distinct suggestion/);
+
+		now += 120_000;
+		await refresh!();
+		assert.equal(confirmations, 3);
+		assert.equal(calls.length, 3);
+
+		siblings.push({ type: "custom", customType: "composer-suggestions", data: {
+			replyId: "assistant", draft: "A different branch's draft.",
+		} });
+		emit("session_shutdown");
+		configure(pi);
+		emit("session_start");
+		await settle(0);
+		assert.match(widget()!, /older saved sessions/);
+		assert.match(widget()!, /2\/2/);
+
+		confirmation = true;
 		let release!: () => void;
 		pause = new Promise<void>((resolve) => { release = resolve; });
-		await settle();
-		events.get("session_before_tree")!({}, ctx);
-		release();
+		const pending = refresh!();
 		await setImmediate();
-		assert.equal(widget, undefined);
+		emit("session_before_tree");
+		assert.equal(calls.at(-1)?.signal.aborted, true);
+		output = JSON.stringify("This stale draft must be ignored.");
+		release();
+		await pending;
+		assert.equal(saved.length, 3);
+		assert.match(widget()!, /2\/2/);
+		branch.push({ id: "new-user", type: "message", message: { role: "user", content: "Unanswered branch." } });
+		emit("session_tree");
+		assert.equal(widget(), "");
+		branch.pop();
+		emit("session_tree");
+		assert.match(widget()!, /2\/2/);
+
+		for (const rejected of ["/exit", "!git status", "hello\nworld"]) {
+			cacheRead = 0;
+			cacheWrite = 0;
+			output = JSON.stringify(rejected);
+			await refresh!();
+			assert.equal(saved.length, 3);
+			assert.match(widget()!, /2\/2/);
+		}
+
+		model.provider = "morph";
+		model.api = "openai-completions";
+		emit("model_select");
+		cacheWrite = 1024;
+		output = JSON.stringify("Check parser behavior on Windows.");
+		await refresh!();
+		const morph = calls.at(-1)!;
+		assert.notEqual(morph.key, calls[0].key);
+		assert.deepEqual(morph.headers, { "x-session-id": morph.key });
+		const previousConfirmations = confirmations;
+		let before = calls.length;
+		confirmation = false;
+		await refresh!();
+		assert.equal(confirmations, previousConfirmations);
+		assert.equal(calls.length, before + 1);
+		assert.equal(calls[before].key, morph.key);
+		assert.match(widget()!, /3\/3/);
+
+		const clearGoal = () => {
+			branch.push({ id: "goal-clear", type: "custom", customType: "goal-state", data: { status: "cleared", condition: "" } });
+		};
+		clearGoal();
+		before = calls.length;
+		await refresh!();
+		assert.equal(confirmations, previousConfirmations + 1);
+		assert.equal(calls.length, before);
+		assert.match(widget()!, /3\/3/);
+
+		confirmation = true;
+		beforeConfirm = () => { branch.pop(); };
+		await refresh!();
+		assert.equal(calls.length, before);
+		beforeConfirm = undefined;
+		clearGoal();
+		output = JSON.stringify("Validate the C# parser.");
+		await refresh!();
+		assert.doesNotMatch(calls[before].content, /Ship the parser fix/);
+		assert.notEqual(calls[before].key, morph.key);
+		assert.match(widget()!, /4\/4/);
+
+		confirmation = false;
+		output = JSON.stringify("Validate the C parser.");
+		await refresh!();
+		assert.match(widget()!, /5\/5/);
+		emit("session_tree");
+		assert.match(widget()!, /5\/5/);
+
+		confirmation = true;
+		for (let index = 5; index < 13; index++) {
+			output = JSON.stringify("Validate parser scenario " + index + ".");
+			await refresh!();
+		}
+		assert.match(widget()!, /13\/13/);
+		assert.equal(calls.at(-1)!.messages.length, 13);
+		before = calls.length;
+		confirmation = false;
+		await refresh!();
+		assert.equal(calls.length, before);
+		confirmation = true;
+		await refresh!();
+		assert.equal(calls.length, before + 1);
+		assert.equal(calls[before].messages.length, 13);
+		assert.equal(calls[before].key, calls[before - 1].key);
+		assert.notEqual(calls[before].messages[1], calls[before - 1].messages[1]);
+
+		pause = new Promise<void>((resolve) => { release = resolve; });
+		output = JSON.stringify("This draft uses an outdated goal.");
+		const outdated = refresh!();
+		await setImmediate();
+		branch.pop();
+		release();
+		await outdated;
+		assert.match(widget()!, /13\/13/);
 	} finally {
-		events.get("session_shutdown")?.({}, ctx);
+		emit("session_shutdown");
 		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousDir;
 		rmSync(folder, { recursive: true, force: true });
