@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Editor } from "@earendil-works/pi-tui";
 import configure from "../extensions/composer-suggestions.ts";
 import { getConfigSetting } from "../extensions/_shared/config-settings.ts";
@@ -16,11 +16,13 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 	const events = new Map<string, (event: object, ctx: ExtensionContext) => void>();
 	let refresh: () => Promise<void>;
 	let editor = "";
-	let focus: unknown = Object.create(Editor.prototype);
+	const composer = { actionHandlers: new Map([["app.clear", () => {}]]) };
+	let focus: unknown = composer;
 	let overlay = false;
 	let render: ((width: number) => string[]) | undefined;
 	let onKey: ((data: string) => { consume?: boolean } | undefined) | undefined;
 	let confirmation = false;
+	let beforeConfirm: (() => void) | undefined;
 	let confirmations = 0;
 	let queued = false;
 	let output = JSON.stringify("Run the parser regression test.");
@@ -30,7 +32,7 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 	let now = 10_000_000;
 	t.mock.method(Date, "now", () => now);
 	const notices: string[] = [];
-	const calls: { content: string; key: string; retries: number; signal: AbortSignal; headers?: Record<string, string> }[] = [];
+	const calls: { content: string; messages: string[]; key: string; retries: number; signal: AbortSignal; headers?: Record<string, string> }[] = [];
 	const model = { id: "gpt-test", provider: "openai", api: "openai-responses", baseUrl: "https://example.invalid" };
 	const branch = [
 		{ id: "unrelated", type: "message", message: { role: "user", content: "Old, unrelated request" } },
@@ -42,6 +44,7 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		{ id: "goal", type: "custom", customType: "goal-state", data: { status: "active", condition: "Ship the parser fix." } },
 	];
 	const saved: unknown[] = [];
+	const siblings: unknown[] = [];
 	const pi = {
 		on: (event: string, handler: NonNullable<ReturnType<typeof events.get>>) => events.set(event, handler),
 		appendEntry: (customType: string, data: unknown) => saved.push({ type: "custom", customType, data }),
@@ -59,7 +62,7 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		ui: {
 			getEditorText: () => editor,
 			setEditorText: (value: string) => { editor = value; },
-			confirm: async () => { confirmations++; return confirmation; },
+			confirm: async () => { confirmations++; beforeConfirm?.(); return confirmation; },
 			notify: (notice: string) => notices.push(notice),
 			onTerminalInput: (handler: typeof onKey) => { onKey = handler; return () => { onKey = undefined; }; },
 			setWidget: (_id: string, factory?: (tui: object, theme: object) => { render: typeof render }) => {
@@ -71,8 +74,8 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 			},
 		},
 		sessionManager: {
-			getBranch: () => branch,
-			getEntries: () => [...branch, ...saved],
+			getBranch: () => [...branch, ...saved],
+			getEntries: () => [...branch, ...saved, ...siblings],
 			getSessionId: () => "thread",
 		},
 		modelRegistry: {
@@ -80,7 +83,7 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 				sessionId: string; maxRetries: number; signal: AbortSignal; headers?: Record<string, string>;
 			}) => ({
 				result: async () => {
-					calls.push({ content: request.messages[0].content, key: options.sessionId, retries: options.maxRetries, signal: options.signal, headers: options.headers });
+					calls.push({ content: request.messages[0].content, messages: request.messages.map((message) => message.content), key: options.sessionId, retries: options.maxRetries, signal: options.signal, headers: options.headers });
 					await pause;
 					return {
 						stopReason: "stop", model: model.id, provider: model.provider,
@@ -129,6 +132,11 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		focus = {};
 		assert.equal(onKey?.("\x1b[C"), undefined);
 		focus = Object.create(Editor.prototype);
+		assert.equal(widget(), "");
+		assert.equal(onKey?.("\t"), undefined);
+		focus = Object.assign(Object.create(CustomEditor.prototype), { actionHandlers: new Map() });
+		assert.equal(onKey?.("\t"), undefined);
+		focus = composer;
 		assert.deepEqual(onKey?.("\t"), { consume: true });
 		assert.equal(editor, "Run the parser regression test.");
 		assert.equal(calls.length, 1);
@@ -138,14 +146,13 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		assert.equal(confirmations, 1);
 		assert.equal(calls.length, 1);
 		confirmation = true;
-		cacheRead = 1024;
+		cacheRead = 128;
 		output = JSON.stringify("Check that the fix works with older saved sessions.");
 		await refresh!();
 		assert.equal(confirmations, 2);
 		assert.equal(calls.length, 2);
 		assert.equal(calls[1].key, calls[0].key);
-		assert.ok(calls[1].content.startsWith(calls[0].content));
-		assert.match(calls[1].content, /Earlier suggestions to avoid: \["Run the parser regression test\."\]/);
+		assert.deepEqual(calls[1].messages, [...calls[0].messages, 'Earlier suggestion to avoid: "Run the parser regression test."']);
 		assert.match(widget()!, /2\/2/);
 
 		assert.deepEqual(onKey?.("\x1b[1;3A"), { consume: true });
@@ -160,6 +167,7 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		await refresh!();
 		assert.equal(confirmations, 2);
 		assert.equal(calls.length, 3);
+		assert.deepEqual(calls[2].messages.slice(0, -1), calls[1].messages);
 		assert.equal(saved.length, 3);
 		assert.match(notices.at(-1)!, /No distinct suggestion/);
 
@@ -168,6 +176,9 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		assert.equal(confirmations, 3);
 		assert.equal(calls.length, 3);
 
+		siblings.push({ type: "custom", customType: "composer-suggestions", data: {
+			replyId: "assistant", draft: "A different branch's draft.",
+		} });
 		emit("session_shutdown");
 		configure(pi);
 		emit("session_start");
@@ -186,7 +197,11 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		release();
 		await pending;
 		assert.equal(saved.length, 3);
+		assert.match(widget()!, /2\/2/);
+		branch.push({ id: "new-user", type: "message", message: { role: "user", content: "Unanswered branch." } });
+		emit("session_tree");
 		assert.equal(widget(), "");
+		branch.pop();
 		emit("session_tree");
 		assert.match(widget()!, /2\/2/);
 
@@ -209,11 +224,69 @@ test("composer preserves grounded drafts, gates cache-uncertain refreshes and ke
 		assert.notEqual(morph.key, calls[0].key);
 		assert.deepEqual(morph.headers, { "x-session-id": morph.key });
 		const previousConfirmations = confirmations;
+		let before = calls.length;
 		confirmation = false;
 		await refresh!();
 		assert.equal(confirmations, previousConfirmations);
-		assert.equal(calls.at(-1)!.key, morph.key);
+		assert.equal(calls.length, before + 1);
+		assert.equal(calls[before].key, morph.key);
 		assert.match(widget()!, /3\/3/);
+
+		const clearGoal = () => {
+			branch.push({ id: "goal-clear", type: "custom", customType: "goal-state", data: { status: "cleared", condition: "" } });
+		};
+		clearGoal();
+		before = calls.length;
+		await refresh!();
+		assert.equal(confirmations, previousConfirmations + 1);
+		assert.equal(calls.length, before);
+		assert.match(widget()!, /3\/3/);
+
+		confirmation = true;
+		beforeConfirm = () => { branch.pop(); };
+		await refresh!();
+		assert.equal(calls.length, before);
+		beforeConfirm = undefined;
+		clearGoal();
+		output = JSON.stringify("Validate the C# parser.");
+		await refresh!();
+		assert.doesNotMatch(calls[before].content, /Ship the parser fix/);
+		assert.notEqual(calls[before].key, morph.key);
+		assert.match(widget()!, /4\/4/);
+
+		confirmation = false;
+		output = JSON.stringify("Validate the C parser.");
+		await refresh!();
+		assert.match(widget()!, /5\/5/);
+		emit("session_tree");
+		assert.match(widget()!, /5\/5/);
+
+		confirmation = true;
+		for (let index = 5; index < 13; index++) {
+			output = JSON.stringify("Validate parser scenario " + index + ".");
+			await refresh!();
+		}
+		assert.match(widget()!, /13\/13/);
+		assert.equal(calls.at(-1)!.messages.length, 13);
+		before = calls.length;
+		confirmation = false;
+		await refresh!();
+		assert.equal(calls.length, before);
+		confirmation = true;
+		await refresh!();
+		assert.equal(calls.length, before + 1);
+		assert.equal(calls[before].messages.length, 13);
+		assert.equal(calls[before].key, calls[before - 1].key);
+		assert.notEqual(calls[before].messages[1], calls[before - 1].messages[1]);
+
+		pause = new Promise<void>((resolve) => { release = resolve; });
+		output = JSON.stringify("This draft uses an outdated goal.");
+		const outdated = refresh!();
+		await setImmediate();
+		branch.pop();
+		release();
+		await outdated;
+		assert.match(widget()!, /13\/13/);
 	} finally {
 		emit("session_shutdown");
 		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
