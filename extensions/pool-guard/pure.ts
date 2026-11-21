@@ -75,7 +75,7 @@ export function reasonForError(text: string): string | undefined {
 function openRouterFailure(text: string, status?: number): { reason?: string; preserveKey?: boolean } {
 	// Pi surfaces either a bare JSON error or an HTTP status followed by that JSON.
 	const jsonStart = text.indexOf("{");
-	let detail: { code?: unknown; message?: unknown; metadata?: { limit_source?: unknown } } | undefined;
+	let detail: { code?: unknown; message?: unknown; metadata?: { limit_source?: unknown; scope?: unknown } } | undefined;
 	if (jsonStart !== -1) {
 		try {
 			const body = JSON.parse(text.slice(jsonStart));
@@ -88,14 +88,17 @@ function openRouterFailure(text: string, status?: number): { reason?: string; pr
 		jsonStart === -1 ? text : text.slice(0, jsonStart),
 	)?.[1]);
 	const source = detail?.metadata?.limit_source;
+	const keyBudget = source === "openrouter_key_limit" ||
+		(source === "openrouter_guardrail_budget" && detail?.metadata?.scope === "api_key");
 	const message = typeof detail?.message === "string" ? detail.message : text;
 	if (
 		(typeof source === "string" && source.startsWith("upstream_")) ||
 		source === "openrouter_free_tier_per_minute" ||
 		source === "openrouter_in_flight_budget" ||
 		(code === 429 && /rate.limited upstream|^provider returned error$/i.test(message)) ||
-		(code === 403 && source !== "openrouter_key_limit")
+		(code === 403 && !keyBudget)
 	) return { preserveKey: true };
+	if (code === 403) return { reason: "http 403 key budget" };
 	const result = outcomeForStatus(code);
 	return { reason: result?.outcome === "exhausted" ? result.reason : reasonForError(message) };
 }

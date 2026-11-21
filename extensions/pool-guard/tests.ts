@@ -177,7 +177,7 @@ describe("createGuard", () => {
 		assert.equal(guard.onAssistantError("openrouter", '402: {"message":"Insufficient credits.","code":402,"metadata":{"limit_source":"openrouter_credits"}}'), true);
 		guard.onRequest("openrouter");
 		assert.equal(guard.onAssistantError("openrouter", '403: {"error":{"code":403,"metadata":{"limit_source":"openrouter_key_limit"}}}'), true);
-		assert.deepEqual(calls, ["openrouter:exhausted:http 402:aaaa1111:123", "openrouter:exhausted:http 403 auth:bbbb2222"]);
+		assert.deepEqual(calls, ["openrouter:exhausted:http 402:aaaa1111:123", "openrouter:exhausted:http 403 key budget:bbbb2222"]);
 	});
 
 	it("reports a routed OpenRouter credit failure using the current key", () => {
@@ -195,8 +195,21 @@ describe("createGuard", () => {
 		assert.deepEqual(calls, []);
 	});
 
+	it("rotates for a key-scoped guardrail budget and preserves wider budget denials", () => {
+		const { guard, calls } = harness(undefined, "openrouter");
+		for (const scope of ["workspace_default_member", "member", "api_key"]) {
+			guard.onRequest("openrouter");
+			const error = `403: {"error":{"code":403,"metadata":{"limit_source":"openrouter_guardrail_budget","scope":"${scope}"}}}`;
+			assert.equal(guard.onAssistantError("openrouter", error), scope === "api_key");
+		}
+		assert.deepEqual(calls, ["openrouter:exhausted:http 403 key budget:aaaa1111"]);
+	});
+
 	it("promotes an OpenRouter trial only after a successful paid-model response", () => {
 		const { guard, calls } = harness({ fingerprint: "aaaa1111", trial: true }, "openrouter");
+		guard.onRequest("virtual-router");
+		guard.onAssistantSuccess("openrouter", "google/gemini-4-neon");
+		assert.deepEqual(calls, []);
 		guard.onRequest("openrouter");
 		guard.onResponse("openrouter", 200);
 		assert.deepEqual(calls, []);
