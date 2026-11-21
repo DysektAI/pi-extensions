@@ -91,6 +91,7 @@ function openRouterFailure(text: string, status?: number): { reason?: string; pr
 	const message = typeof detail?.message === "string" ? detail.message : text;
 	if (
 		(typeof source === "string" && source.startsWith("upstream_")) ||
+		source === "openrouter_free_tier_per_minute" ||
 		source === "openrouter_in_flight_budget" ||
 		(code === 429 && /rate.limited upstream|^provider returned error$/i.test(message)) ||
 		(code === 403 && source !== "openrouter_key_limit")
@@ -215,8 +216,7 @@ export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
 	// Key in use when the latest request to each pool started, so a late report
 	// cannot bench a different key that was picked in the meantime.
 	const inFlight = new Map<string, PoolCurrent & { status?: number; headers?: Record<string, string> }>();
-	const bench = (pool: string, reason: string, untilSec?: number) => {
-		const fingerprint = inFlight.get(pool)?.fingerprint;
+	const bench = (pool: string, reason: string, untilSec?: number, fingerprint = inFlight.get(pool)?.fingerprint) => {
 		const at = deps.now();
 		const previous = lastBench.get(pool);
 		const recent = previous !== undefined && previous.fingerprint === fingerprint && at - previous.at < DEDUPE_MS;
@@ -247,14 +247,17 @@ export function createGuard(pools: Map<string, string>, deps: GuardDeps) {
 			bench(pool, result.reason, retryAfterSeconds(headers));
 		},
 		/** Return whether the caller should check for an unusable pool. */
-		onAssistantError(provider: string | undefined, errorText: string): boolean {
+		onAssistantError(provider: string | undefined, errorText: string, selectedProvider = provider): boolean {
 			const pool = provider ? pools.get(provider) : undefined;
 			if (!pool || !errorText) return true;
 			if (pool === "openrouter") {
 				const request = inFlight.get(pool);
 				const { reason, preserveKey } = openRouterFailure(errorText, request?.status);
-				if (reason && request?.fingerprint) {
-					bench(pool, reason, retryAfterSeconds(request.headers, errorText));
+				if (reason) {
+					// A virtual route may expose the physical provider only on the assistant message.
+					const fingerprint = request?.fingerprint ??
+						(selectedProvider !== provider ? deps.current(pool).fingerprint : undefined);
+					if (fingerprint) bench(pool, reason, retryAfterSeconds(request?.headers, errorText), fingerprint);
 				}
 				inFlight.delete(pool);
 				return !preserveKey;

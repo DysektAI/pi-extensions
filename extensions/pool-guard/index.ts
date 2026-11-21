@@ -175,7 +175,7 @@ export default function poolGuard(pi: ExtensionAPI): void {
 		if (message.role !== "assistant") return;
 		if (message.errorMessage) {
 			const provider = message.provider ?? ctx.model?.provider;
-			if (guard.onAssistantError(provider, message.errorMessage)) {
+			if (guard.onAssistantError(provider, message.errorMessage, ctx.model?.provider)) {
 				return avoidUnusablePool(ctx, ctx.model?.provider).catch(() => {});
 			}
 			return;

@@ -180,6 +180,21 @@ describe("createGuard", () => {
 		assert.deepEqual(calls, ["openrouter:exhausted:http 402:aaaa1111:123", "openrouter:exhausted:http 403 auth:bbbb2222"]);
 	});
 
+	it("reports a routed OpenRouter credit failure using the current key", () => {
+		const { guard, calls } = harness(undefined, "openrouter");
+		guard.onRequest("virtual-router");
+		guard.onAssistantError("openrouter", "Insufficient credits", "virtual-router");
+		assert.deepEqual(calls, ["openrouter:exhausted:quota error:aaaa1111"]);
+	});
+
+	it("keeps the OpenRouter key selected during a shared free-tier minute limit", () => {
+		const { guard, calls } = harness(undefined, "openrouter");
+		guard.onRequest("openrouter");
+		guard.onResponse("openrouter", 429);
+		assert.equal(guard.onAssistantError("openrouter", '429: {"message":"Rate limit exceeded","code":429,"metadata":{"limit_source":"openrouter_free_tier_per_minute"}}'), false);
+		assert.deepEqual(calls, []);
+	});
+
 	it("promotes an OpenRouter trial only after a successful paid-model response", () => {
 		const { guard, calls } = harness({ fingerprint: "aaaa1111", trial: true }, "openrouter");
 		guard.onRequest("openrouter");
